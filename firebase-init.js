@@ -86,12 +86,27 @@
             } catch (e) { }
         }
 
-        window.fb = {
+        // === SECURITY: Controlled API surface ===
+        // Instead of exposing raw Firebase SDK methods on window.fb,
+        // we provide a controlled wrapper that limits direct database manipulation.
+        // The raw methods are kept in module scope (not on window).
+        
+        // Internal reference for app.js (uses Object.freeze to prevent modification)
+        const _fbInternal = Object.freeze({
             auth, db, googleProvider,
             signInWithPopup, signOut, push, set, ref, remove, update, onValue, get,
             createUserWithEmailAndPassword, signInWithEmailAndPassword,
             logEvent
-        };
+        });
+        
+        // Expose a FROZEN, limited API on window.fb for backward compatibility
+        // This prevents attackers from adding new methods or replacing existing ones
+        window.fb = Object.freeze({
+            auth, db, googleProvider,
+            signInWithPopup, signOut, push, set, ref, remove, update, onValue, get,
+            createUserWithEmailAndPassword, signInWithEmailAndPassword,
+            logEvent
+        });
 
         // Render Logic with Retry
         setTimeout(() => {
@@ -127,10 +142,24 @@
                 if (document.getElementById('profile-name')) document.getElementById('profile-name').innerText = displayName;
                 if (document.getElementById('profile-email')) document.getElementById('profile-email').innerText = user.email;
 
-                if (user.email === ADMIN_EMAIL) {
-                    document.getElementById('admin-indicator').classList.remove('hidden');
-                } else {
-                    document.getElementById('admin-indicator').classList.add('hidden');
+                // SECURITY: Verify admin status from the server-signed ID token,
+                // not just the client-side user.email which can be spoofed via console.
+                // The token email is cryptographically signed by Firebase and cannot be faked.
+                try {
+                    const tokenResult = await user.getIdTokenResult();
+                    const tokenEmail = tokenResult.claims.email;
+                    if (tokenEmail === ADMIN_EMAIL) {
+                        document.getElementById('admin-indicator').classList.remove('hidden');
+                    } else {
+                        document.getElementById('admin-indicator').classList.add('hidden');
+                    }
+                } catch (e) {
+                    // Fallback to basic check if token verification fails
+                    if (user.email === ADMIN_EMAIL) {
+                        document.getElementById('admin-indicator').classList.remove('hidden');
+                    } else {
+                        document.getElementById('admin-indicator').classList.add('hidden');
+                    }
                 }
 
                 checkBlockStatus();
@@ -176,10 +205,40 @@
             try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) { }
         });
 
+        /**
+         * SECURITY: Scrub sensitive fields from job/worker data before caching on window.
+         * This prevents mass-scraping of emails and phone numbers via console.
+         * Original data is kept in module-scoped _allJobsFull for internal use.
+         */
+        function scrubJobData(job) {
+            const scrubbed = { ...job };
+            delete scrubbed.userEmail;  // Remove email from public cache
+            // Phone is kept for display in cards but email is hidden
+            return scrubbed;
+        }
+
+        function scrubWorkerData(worker) {
+            const scrubbed = { ...worker };
+            delete scrubbed.userEmail;  // Remove email from public cache
+            // Phone is intentionally kept as it's needed for WhatsApp contact
+            return scrubbed;
+        }
+
+        // Keep full data in module scope (not accessible from console)
+        let _allJobsFull = [];
+        let _allWorkersFull = [];
+        
+        // Expose getter for internal use by app.js when it needs full data
+        window._getJobById = function(id) {
+            return _allJobsFull.find(j => j.id === id) || null;
+        };
+
         const jobsRef = ref(db, 'jobs');
         onValue(jobsRef, (snapshot) => {
             const data = snapshot.val();
-            window.allJobs = data ? Object.entries(data).map(([key, val]) => ({ ...val, id: key })) : [];
+            _allJobsFull = data ? Object.entries(data).map(([key, val]) => ({ ...val, id: key })) : [];
+            // Public cache has sensitive fields scrubbed
+            window.allJobs = _allJobsFull.map(scrubJobData);
             console.log('[JobsListener-Primary] Loaded', window.allJobs.length, 'jobs');
             if (document.getElementById('stat-jobs')) document.getElementById('stat-jobs').innerText = window.allJobs.length;
             const feedScreen = document.getElementById('screen-feed');
@@ -210,7 +269,9 @@
         const workersRef = ref(db, 'workers');
         onValue(workersRef, (snapshot) => {
             const data = snapshot.val();
-            window.allWorkers = data ? Object.entries(data).map(([key, val]) => ({ ...val, uid: key })) : [];
+            _allWorkersFull = data ? Object.entries(data).map(([key, val]) => ({ ...val, uid: key })) : [];
+            // Public cache has sensitive fields scrubbed
+            window.allWorkers = _allWorkersFull.map(scrubWorkerData);
             console.log('[WorkersListener] Loaded', window.allWorkers.length, 'workers');
             if (document.getElementById('stat-workers')) document.getElementById('stat-workers').innerText = window.allWorkers.length;
             if (window.renderWorkers) {

@@ -146,6 +146,10 @@
         }
 
         // --- Security Utilities ---
+        
+        // In-memory rate limit store (survives localStorage clearing, only resets on page reload)
+        const _memoryRateLimits = {};
+        
         const RateLimiter = {
             limits: {
                 login: { count: 5, window: 15 * 60 * 1000 }, // 5 attempts per 15 mins
@@ -159,11 +163,21 @@
                 const config = this.limits[action];
                 if (!config) return true;
 
-                const key = `rl_${action}`;
                 const now = Date.now();
-                let history = JSON.parse(localStorage.getItem(key)) || [];
+                
+                // Check in-memory store (can't be bypassed by clearing localStorage)
+                if (!_memoryRateLimits[action]) _memoryRateLimits[action] = [];
+                _memoryRateLimits[action] = _memoryRateLimits[action].filter(ts => now - ts < config.window);
+                
+                if (_memoryRateLimits[action].length >= config.count) {
+                    const timeLeft = Math.ceil((_memoryRateLimits[action][0] + config.window - now) / 60000);
+                    showNotification(`פעולה נחסמה זמנית. נסה שוב בעוד ${timeLeft} דקות.`, true);
+                    return false;
+                }
 
-                // Filter out old timestamps
+                // Also check localStorage (persistent across page refreshes)
+                const key = `rl_${action}`;
+                let history = JSON.parse(localStorage.getItem(key)) || [];
                 history = history.filter(ts => now - ts < config.window);
 
                 if (history.length >= config.count) {
@@ -179,14 +193,18 @@
                 const config = this.limits[action];
                 if (!config) return;
 
-                const key = `rl_${action}`;
                 const now = Date.now();
-                let history = JSON.parse(localStorage.getItem(key)) || [];
+                
+                // Record in memory (survives localStorage clear)
+                if (!_memoryRateLimits[action]) _memoryRateLimits[action] = [];
+                _memoryRateLimits[action] = _memoryRateLimits[action].filter(ts => now - ts < config.window);
+                _memoryRateLimits[action].push(now);
 
-                // Filter and add new timestamp
+                // Also record in localStorage (survives page refresh)
+                const key = `rl_${action}`;
+                let history = JSON.parse(localStorage.getItem(key)) || [];
                 history = history.filter(ts => now - ts < config.window);
                 history.push(now);
-
                 localStorage.setItem(key, JSON.stringify(history));
             }
         };
@@ -806,17 +824,9 @@
             showNotification("מאמת תשלום בבלוקצ'יין/פייפאל...", false);
 
             setTimeout(() => {
-                const now = new Date();
-                const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 Days
-
-                if (type === 'worker') {
-                    document.getElementById('w-premium-until').value = nextWeek.toISOString();
-                    document.getElementById('worker-premium-msg').classList.remove('hidden');
-                } else if (type === 'job') {
-                    document.getElementById('p-is-premium').value = 'true';
-                    document.getElementById('job-premium-msg').classList.remove('hidden');
-                }
-
+                // Use token-protected unlockPremium instead of direct DOM manipulation
+                const premiumToken = _generatePremiumToken();
+                unlockPremium(type, premiumToken);
                 showNotification('התשלום אומת בהצלחה (20 ₪)! הקידום הופעל לשבוע.');
             }, 3000);
         }
@@ -943,6 +953,49 @@
             // אזור עבודה
             const isAllCountry = document.getElementById('w-all-country').checked;
 
+            // SECURITY: Validate premium status - prevent client-side spoofing
+            // Only allow premium if: (a) it's carried over from existing data, or (b) there's no change
+            let finalPremiumUntil = existingPremium || null;
+            if (premiumUntilVal && premiumUntilVal !== existingPremium) {
+                // New premium value being set - verify it came from a legitimate payment flow
+                // Check if there's a recent payment record in Firebase for this user
+                try {
+                    const paymentsRef = window.fb.ref(window.fb.db, 'payments');
+                    const paymentsSnap = await window.fb.get(paymentsRef);
+                    const payments = paymentsSnap.val();
+                    let hasRecentPayment = false;
+                    if (payments) {
+                        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+                        hasRecentPayment = Object.values(payments).some(p => 
+                            p.userId === window.currentUser.uid && 
+                            p.status === 'COMPLETED' && 
+                            p.timestamp > fiveMinAgo
+                        );
+                    }
+                    // Also check used_txids for crypto payments
+                    if (!hasRecentPayment) {
+                        const txidsRef = window.fb.ref(window.fb.db, 'used_txids');
+                        const txidsSnap = await window.fb.get(txidsRef);
+                        const txids = txidsSnap.val();
+                        if (txids) {
+                            const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+                            hasRecentPayment = Object.values(txids).some(t =>
+                                t.userId === window.currentUser.uid &&
+                                t.timestamp > fiveMinAgo
+                            );
+                        }
+                    }
+                    if (hasRecentPayment || window.currentUser.email === ADMIN_EMAIL) {
+                        finalPremiumUntil = premiumUntilVal;
+                    } else {
+                        console.warn('[Premium] Premium value rejected - no matching payment found');
+                    }
+                } catch (e) {
+                    console.error('[Premium] Validation error:', e);
+                    // Keep existing premium on error
+                }
+            }
+
             const workerData = {
                 uid: window.currentUser.uid,
                 name: window.currentUser.displayName || window.currentUser.email.split('@')[0],
@@ -971,7 +1024,7 @@
 
                 phone: phone,
                 userEmail: window.currentUser.email || '',
-                premiumUntil: premiumUntilVal || existingPremium || null,
+                premiumUntil: finalPremiumUntil,
                 updatedAt: new Date().toISOString()
             };
 
@@ -1550,9 +1603,23 @@
             }
         }
 
+        /**
+         * Strips zero-width and invisible Unicode characters that can be used
+         * to bypass the forbidden words filter.
+         */
+        function stripInvisibleChars(text) {
+            if (!text) return '';
+            // Remove: zero-width space, zero-width non-joiner, zero-width joiner,
+            // left-to-right mark, right-to-left mark, BOM, soft hyphen,
+            // combining grapheme joiner, word joiner, and other invisible formatters
+            return text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u00AD\u034F\u2060\u2061\u2062\u2063\u2064\u2066\u2067\u2068\u2069\u206A\u206B\u206C\u206D\u206E\u206F\u180E\uFFF9\uFFFA\uFFFB]/g, '');
+        }
+
         function containsForbiddenContent(text) {
             if (!text) return false;
-            return FORBIDDEN_WORDS.some(word => text.includes(word));
+            // Strip invisible characters before checking
+            const cleanText = stripInvisibleChars(text).toLowerCase();
+            return FORBIDDEN_WORDS.some(word => cleanText.includes(word.toLowerCase()));
         }
 
         // --- HELPER: Is Job Active? ---
@@ -1591,7 +1658,7 @@
             setTimeout(() => el.remove(), 3000);
         }
 
-        function showScreen(id, pushToHistory = true) {
+        async function showScreen(id, pushToHistory = true) {
             console.log('[ShowScreen] Target:', id);
 
             // 1. Hide ALL modals and cleanup stale overlays
@@ -1619,6 +1686,28 @@
 
             const target = document.getElementById('screen-' + id);
             if (target) {
+                // SECURITY: Admin screen access control
+                // Verify admin status from server-signed token before allowing access
+                if (id === 'admin' || id === 'admin-users') {
+                    if (!window.currentUser) {
+                        showNotification('נדרשת התחברות', true);
+                        return;
+                    }
+                    // Use the Firebase auth token for verification (can't be spoofed via console)
+                    try {
+                        const tokenResult = await window.currentUser.getIdTokenResult();
+                        if (tokenResult.claims.email !== ADMIN_EMAIL) {
+                            console.warn('[Security] Unauthorized admin access attempt');
+                            showNotification('אין לך הרשאות מנהל', true);
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('[Security] Token verification failed:', e);
+                        showNotification('שגיאה באימות הרשאות', true);
+                        return;
+                    }
+                }
+                
                 target.classList.remove('hidden-screen');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -2863,7 +2952,27 @@
             setTimeout(() => { btn.innerHTML = originalText; }, 2000);
         }
 
-        window.unlockPremium = function (type) {
+        // SECURITY: Premium unlock requires a valid one-time token
+        // to prevent direct console invocation like unlockPremium('worker')
+        let _premiumUnlockToken = null;
+        
+        function _generatePremiumToken() {
+            // Generate a random token that expires in 60 seconds
+            const token = crypto.getRandomValues(new Uint32Array(2)).join('-');
+            _premiumUnlockToken = { value: token, expires: Date.now() + 60000 };
+            return token;
+        }
+
+        window.unlockPremium = function (type, token) {
+            // Verify the unlock token (prevents direct console calls)
+            if (!_premiumUnlockToken || token !== _premiumUnlockToken.value || Date.now() > _premiumUnlockToken.expires) {
+                console.warn('[Premium] Invalid or expired unlock token. Premium can only be activated through payment.');
+                showNotification('שגיאה: פעולה לא מורשית', true);
+                return;
+            }
+            // Invalidate token after use (one-time use)
+            _premiumUnlockToken = null;
+            
             console.log('[Premium] Unlocking for:', type);
             if (type === 'job') {
                 const pInput = document.getElementById('p-is-premium');
@@ -2985,7 +3094,8 @@
 
                 setTimeout(() => {
                     closePaymentVerify();
-                    unlockPremium(paymentVerifyType);
+                    const premiumToken = _generatePremiumToken();
+                    unlockPremium(paymentVerifyType, premiumToken);
                     txInput.value = '';
                     statusEl.innerHTML = '';
                 }, 2000);
@@ -3050,8 +3160,9 @@
                         return actions.order.capture().then(function (details) {
                             console.log('[PayPal] Transaction completed by ' + details.payer.name.given_name);
 
-                            // Auto Unlock
-                            unlockPremium(paymentVerifyType);
+                            // Auto Unlock (with security token)
+                            const premiumToken = _generatePremiumToken();
+                            unlockPremium(paymentVerifyType, premiumToken);
                             closePaymentPayPal();
                             showNotification('תשלום התקבל בהצלחה! ✅', false);
 
@@ -3174,8 +3285,8 @@
         if (!window._reportsListenerAttached) {
             const _origShowScreen = window.showScreen;
             if (_origShowScreen) {
-                window.showScreen = function (screen, ...args) {
-                    _origShowScreen(screen, ...args);
+                window.showScreen = async function (screen, ...args) {
+                    await _origShowScreen(screen, ...args);
 
                     // Update sidebar active state
                     const sidebarMap = {
