@@ -1,0 +1,12 @@
+This file previously contained a full-page dump (including third-party “exploit” notes) mixed with GigNow HTML/CSS/JS.
+
+The maintained application source is now split for clarity and safer review:
+
+- index.html — markup and script/style references only
+- styles.css — site styles (extracted from the former inline <style> block)
+- app.js — main application logic (formerly the large non-module <script> block)
+- firebase-init.js — Firebase module bootstrap (formerly the inline type="module" block)
+
+Security-related fixes applied in those files include: safer handling of profile/avatar image URLs, escaping Firebase error text shown in the DOM, sanitizing worker profile image URLs, avoiding inline onclick in the location reminder (event listeners instead), allowlisting pagination callbacks, fixing clipboard button handling to use the click event, encoding Nominatim query parameters, and pinning the Lucide script to a fixed version.
+
+Do not use this file as the app entry point; open index.html instead.

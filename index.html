@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google" content="notranslate">
+    <title>GigNow - עבודה יומית בקליק</title>
+    <meta name="description"
+        content="GigNow - עבודה יומית בקליק. מוצאים ומגייסים עובדים יומיים במהירות, בלי כאב ראש, עם מערכת חכמה שמחברת בין עסקים לעובדים זמינים באזור.">
+    <meta name="keywords"
+        content="GigNow, גיג נאו, עבודה יומית, עובדים יומיים, עבודות יומיות, עובדים לפי שעה, כוח אדם מהיר, עבודות מיידיות">
+    <meta name="robots" content="index,follow">
+
+    <!-- Open Graph / Social Preview -->
+    <meta property="og:title" content="GigNow - עבודה יומית בקליק">
+    <meta property="og:description"
+        content="מערכת חכמה לחיבור מהיר בין עסקים לעובדים יומיים זמינים. פותחים משמרת ומקבלים מועמדים מתאימים תוך דקות.">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="he_IL">
+    <meta property="og:site_name" content="GigNow">
+    <meta property="og:url" content="https://gignow.co.il">
+    <meta property="og:image" content="https://gignow.co.il/logo.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="GigNow - עבודה יומית בקליק">
+    <meta name="twitter:description"
+        content="GigNow מחברת בין עסקים לבין עובדים יומיים זמינים באזור – פתיחת משמרת, סינון מועמדים וניהול בקליק.">
+    <meta name="twitter:image" content="https://gignow.co.il/logo.png">
+
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💼</text></svg>">
+    <!-- CSP is handled by _headers file at server level -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="text-slate-900 pb-24" style="background:#f0f6ff;">
+
+    <!-- Professional Blue-White Background -->
+    <div class="global-bg">
+        <!-- Soft blue orbs -->
+        <div class="glass-bubble"
+            style="width:700px;height:700px;top:-20%;right:-15%;background:radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 65%);animation:flowBlob1 24s infinite ease-in-out;">
+        </div>
+        <div class="glass-bubble"
+            style="width:550px;height:550px;bottom:-15%;left:-10%;background:radial-gradient(circle, rgba(99,102,241,0.07) 0%, transparent 65%);animation:flowBlob2 30s infinite ease-in-out;">
+        </div>
+        <div class="glass-bubble"
+            style="width:400px;height:400px;top:30%;left:25%;background:radial-gradient(circle, rgba(147,197,253,0.12) 0%, transparent 65%);animation:flowBlob3 22s infinite ease-in-out;">
+        </div>
+        <div class="glass-bubble"
+            style="width:300px;height:300px;top:55%;right:10%;background:radial-gradient(circle, rgba(165,180,252,0.1) 0%, transparent 65%);animation:flowBlob1 18s infinite ease-in-out reverse;">
+        </div>
+    </div>
+    </div>
+
+    <nav id="navbar"
+        class="sticky top-0 z-50 px-5 h-16 flex justify-between items-center bg-white/90 backdrop-blur-md border-b border-slate-100 shadow-sm">
+        <!-- Profile & My Job buttons -->
+        <div class="flex items-center gap-2">
+            <!-- Profile button -->
+            <button onclick="checkAuthAndNavigate('profile')"
+                class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 px-3 py-2 rounded-2xl transition-all active:scale-95 relative group"
+                aria-label="פרופיל">
+                <span id="nav-avatar" class="text-base flex items-center justify-center w-5 h-5">
+                    <i data-lucide="user" class="w-4 h-4 text-blue-600"></i>
+                </span>
+                <span class="text-blue-700 text-xs font-bold hidden sm:block">הפרופיל שלי</span>
+                <span id="loc-alert-dot"
+                    class="absolute -top-1 -right-1 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-white hidden"></span>
+            </button>
+
+            <!-- My Job button -->
+            <button onclick="showMyJob()"
+                class="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-3 py-2 rounded-2xl transition-all active:scale-95 group"
+                aria-label="המשרה שלי">
+                <span class="text-base flex items-center justify-center w-5 h-5">
+                    <i data-lucide="briefcase" class="w-4 h-4 text-indigo-600"></i>
+                </span>
+                <span class="text-indigo-700 text-xs font-bold hidden sm:block">המשרה שלי</span>
+            </button>
+        </div>
+
+        <!-- Logo perfectly centered -->
+        <h1 onclick="showScreen('home')"
+            class="text-2xl font-black tracking-tighter cursor-pointer select-none flex items-center gap-2 absolute left-1/2 -translate-x-1/2"
+            role="banner">
+            <span
+                class="bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 bg-clip-text text-transparent">GigNow</span>
+            <span class="relative flex h-2 w-2">
+                <span
+                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+            </span>
+        </h1>
+
+        <!-- Right spacer for symmetry -->
+        <div class="w-20 sm:w-24"></div>
+    </nav>
+
+    <div class="max-w-2xl lg:max-w-3xl mx-auto px-4">
+        <div id="app-content">
+
+            <div id="screen-home" class="px-4 pt-8 pb-12 fade-in flex flex-col items-center min-h-[85vh] relative">
+
+                <!-- Hero Section -->
+                <div class="text-center mb-10 w-full relative z-10 animate-slide-up animate-delay-1">
+                    <!-- Greeting badge -->
+                    <div
+                        class="inline-flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-full border border-blue-100 shadow-sm mb-6">
+                        <span class="relative flex h-2.5 w-2.5">
+                            <span
+                                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                        </span>
+                        <span class="text-xs font-bold text-blue-700">הפלטפורמה פעילה עכשיו</span>
+                    </div>
+
+                    <h2 class="text-5xl font-black mb-4 tracking-tight leading-[1.15]">
+                        <span class="text-slate-800">עבודות יומיות</span><br>
+                        <span class="gradient-text">ובעלי מקצוע.</span>
+                    </h2>
+                    <p class="text-slate-500 font-medium text-base max-w-sm mx-auto leading-relaxed">
+                        הפלטפורמה המהירה בישראל לעבודות מזדמנות וכסף מיידי.</p>
+                </div>
+
+                <!-- Action Cards -->
+                <div class="grid gap-4 w-full relative z-10">
+                    <!-- Card 1: Job Board -->
+                    <button onclick="showScreen('feed')"
+                        class="home-card-premium bg-gradient-to-br from-blue-600 via-blue-500 to-indigo-600 text-white p-6 rounded-3xl shadow-xl shadow-blue-500/20 active:scale-[0.97] flex items-center justify-between group transition-all animate-slide-up animate-delay-2">
+                        <div class="text-right flex-1">
+                            <div class="text-2xl font-extrabold mb-1">לוח משרות</div>
+                            <div class="text-blue-100/90 text-sm font-medium">חפש עבודה בזמן אמת</div>
+                        </div>
+                        <div class="bg-white/15 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10">
+                            <i data-lucide="rocket" class="w-8 h-8 icon-float"></i>
+                        </div>
+                    </button>
+
+                    <!-- Card 2: Post Job -->
+                    <button id="home-post-btn" onclick="checkAuthAndNavigate('post')"
+                        class="home-card-premium home-card-white bg-white text-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 active:scale-[0.97] flex items-center justify-between transition-all animate-slide-up animate-delay-3">
+                        <div class="text-right flex-1">
+                            <div class="text-xl font-extrabold mb-1">פרסם משרה</div>
+                            <div class="flex items-center gap-1.5">
+                                <span
+                                    class="bg-green-100 text-green-700 text-[10px] font-black px-2 py-0.5 rounded-md border border-green-200">חינם</span>
+                                <span class="text-slate-400 text-sm font-medium">בלי עמלות</span>
+                            </div>
+                        </div>
+                        <div
+                            class="bg-gradient-to-br from-amber-50 to-orange-50 p-3.5 rounded-2xl border border-amber-100/50">
+                            <i data-lucide="megaphone" class="w-8 h-8 text-amber-600"></i>
+                        </div>
+                    </button>
+
+                    <!-- Card 3: Find Workers -->
+                    <button onclick="showScreen('workers')"
+                        class="home-card-premium home-card-dark bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800 text-white p-6 rounded-3xl shadow-lg shadow-slate-800/20 active:scale-[0.97] flex items-center justify-between group transition-all animate-slide-up animate-delay-4">
+                        <div class="text-right flex-1">
+                            <div class="text-2xl font-extrabold mb-1">חיפוש עובדים</div>
+                            <div class="text-slate-400 text-sm font-medium">מצא בעלי מקצוע זמינים</div>
+                        </div>
+                        <div class="bg-white/10 backdrop-blur-sm p-3.5 rounded-2xl border border-white/5">
+                            <i data-lucide="hard-hat" class="w-8 h-8 icon-float" style="animation-delay: 1s;"></i>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Stats & Trust -->
+                <div class="w-full mt-10 relative z-10 animate-slide-up animate-delay-5">
+                    <div class="grid grid-cols-2 gap-3 mb-4">
+                        <div class="bg-white border border-blue-100 shadow-sm p-4 rounded-2xl text-center">
+                            <div class="flex items-center justify-center gap-1.5 mb-1">
+                                <i data-lucide="briefcase" class="w-5 h-5 text-blue-500" aria-hidden="true"></i>
+                                <span class="font-black text-2xl text-blue-600" id="stat-jobs">0</span>
+                            </div>
+                            <div class="text-xs font-bold text-slate-400 tracking-wide">משרות פעילות</div>
+                        </div>
+                        <div class="bg-white border border-blue-100 shadow-sm p-4 rounded-2xl text-center">
+                            <div class="flex items-center justify-center gap-1.5 mb-1">
+                                <i data-lucide="users" class="w-5 h-5 text-indigo-500" aria-hidden="true"></i>
+                                <span class="font-black text-2xl text-slate-800" id="stat-workers">0</span>
+                            </div>
+                            <div class="text-xs font-bold text-slate-400 tracking-wide">בעלי מקצוע</div>
+                        </div>
+                    </div>
+                    <div
+                        class="flex items-center justify-center gap-4 py-3 px-4 bg-white rounded-2xl border border-blue-100 shadow-sm">
+                        <div class="flex items-center gap-1.5 text-slate-500">
+                            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-green-500" aria-hidden="true"></i>
+                            <span class="text-[10px] font-bold">מאובטח</span>
+                        </div>
+                        <div class="w-px h-3 bg-slate-200"></div>
+                        <div class="flex items-center gap-1.5 text-slate-500">
+                            <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-500" aria-hidden="true"></i>
+                            <span class="text-[10px] font-bold">מיידי</span>
+                        </div>
+                        <div class="w-px h-3 bg-slate-200"></div>
+                        <div class="flex items-center gap-1.5 text-slate-500">
+                            <i data-lucide="heart" class="w-3.5 h-3.5 text-red-400" aria-hidden="true"></i>
+                            <span class="text-[10px] font-bold">חינם לגמרי</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="screen-login"
+                class="hidden-screen px-4 pt-8 fade-in pb-10 flex flex-col items-center justify-center min-h-[70vh]">
+                <button onclick="showScreen('home')" class="back-btn self-start"><span>➔</span> חזרה לראשי</button>
+
+                <div class="w-full bg-white p-8 rounded-3xl shadow-2xl shadow-slate-200/50 border border-slate-100">
+                    <div class="text-center mb-8">
+                        <div class="bg-blue-50 p-4 rounded-2xl inline-block mb-4 text-4xl shadow-inner text-blue-600">
+                            <i data-lucide="lock" class="w-10 h-10"></i>
+                        </div>
+                        <h2 class="text-3xl font-black text-slate-800">ברוכים הבאים</h2>
+                        <p class="text-slate-500 mt-2 text-sm font-medium">התחבר באמצעות גוגל כדי להתחיל</p>
+                    </div>
+
+                    <div class="mt-4">
+                        <button onclick="loginWithGoogle()"
+                            class="w-full bg-white border border-slate-200 text-slate-700 py-4 rounded-xl font-bold flex items-center justify-center gap-3 shadow-sm hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all">
+                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                                class="w-5 h-5">
+                            <span>המשך עם Google</span>
+                        </button>
+                    </div>
+
+                    <div id="login-error"
+                        class="text-red-500 text-xs mt-4 text-center hidden font-bold bg-red-50 p-3 rounded-xl border border-red-100 flex items-center justify-center gap-2">
+                        <span>⚠️</span> <span id="login-error-text"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="screen-profile" class="hidden-screen px-4 pt-4 fade-in pb-10">
+                <button onclick="showScreen('home')" class="back-btn"><span>➔</span> חזרה לראשי</button>
+
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-black text-slate-800">הפרופיל שלי</h2>
+                    <button onclick="handleLogout()"
+                        class="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-100 transition">התנתק</button>
+                </div>
+
+                <div
+                    class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 mb-6 flex items-center gap-5 relative overflow-hidden">
+                    <div id="admin-indicator" onclick="showScreen('admin')"
+                        class="hidden cursor-pointer absolute top-0 left-0 w-full bg-yellow-400 text-black text-center text-[10px] font-bold py-1 hover:bg-yellow-500 transition">
+                        👑 מחובר במצב מנהל מערכת - לחץ לכניסה לניהול</div>
+                    <img id="profile-img" src=""
+                        class="w-20 h-20 rounded-full bg-slate-200 border-4 border-white shadow-md">
+                    <div>
+                        <div class="text-xl font-bold text-slate-900" id="profile-name"></div>
+                        <div class="text-sm text-slate-500 font-medium" id="profile-email"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white border border-slate-200 p-5 rounded-3xl mb-6 shadow-sm relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-600">
+                    </div>
+                    <h3 class="font-bold flex items-center gap-2 mb-2 text-slate-900 text-lg">
+                        <span class="bg-blue-100 p-1.5 rounded-lg text-blue-600"><i data-lucide="hard-hat"
+                                class="w-5 h-5"></i></span>
+                        <span>פרופיל עובד (Hire Me)</span>
+                    </h3>
+
+                    <div id="worker-join-ui">
+                        <p class="text-sm text-slate-500 mb-4 font-medium leading-relaxed">הוסף את עצמך למאגר כדי
+                            שמעסיקים יפנו אליך.</p>
+                        <button onclick="toggleWorkerForm()"
+                            class="w-full bg-slate-900 text-white py-3 rounded-xl text-sm font-bold shadow-lg shadow-slate-200 hover:bg-black transition transform active:scale-95">➕
+                            צור פרופיל</button>
+                    </div>
+
+                    <div id="worker-manage-ui" class="hidden">
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-3 flex items-center gap-3">
+                            <span class="text-2xl">✅</span>
+                            <div>
+                                <div class="font-bold text-slate-900 text-sm">הפרופיל שלך פעיל</div>
+                                <div class="text-xs text-slate-500">מעסיקים יכולים למצוא אותך</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="toggleWorkerForm()"
+                                class="bg-white text-slate-700 py-2.5 rounded-xl text-sm font-bold border border-slate-200 hover:bg-slate-50">📝
+                                ערוך</button>
+                            <button onclick="deleteWorkerProfile()"
+                                class="bg-white text-red-500 py-2.5 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-50">🗑️
+                                מחק</button>
+                        </div>
+                    </div>
+
+                    <div id="worker-setup-form" class="hidden mt-4 space-y-4 pt-4 border-t border-slate-100">
+
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">כותרת / סלוגן אישי
+                                (חובה)</label>
+                            <input type="text" id="w-title"
+                                class="input-field text-sm font-bold border-blue-200 bg-blue-50/50"
+                                placeholder="למשל: ספר מקצועי שמגיע עד הבית">
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">קטגוריה</label>
+                            <select id="w-profession-select" onchange="toggleCustomProfession()"
+                                class="input-field text-sm">
+                                <option value="general">🛠️ עובד כללי</option>
+                                <option value="barber">✂️ ספר/מספרה</option>
+                                <option value="cleaner">🧹 ניקיון</option>
+                                <option value="mover">📦 הובלות</option>
+                                <option value="handyman">🔧 הנדימן</option>
+                                <option value="waiter">🍷 מלצרות</option>
+                                <option value="gardener">🌳 גינון</option>
+                                <option value="babysitter">👶 בייביסיטר</option>
+                                <option value="tutor">📚 שיעורים</option>
+                                <option value="other">✨ אחר (כתוב בעצמך)</option>
+                            </select>
+                            <input type="text" id="w-profession-custom" class="hidden input-field mt-2 text-sm"
+                                placeholder="למשל: חשמלאי מוסמך">
+                        </div>
+
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                            <div class="flex justify-between items-center mb-3">
+                                <label class="text-xs font-bold text-slate-500 block">📍 אזור שירות (איפה אתה
+                                    עובד?)</label>
+                                <label class="flex items-center gap-2 cursor-pointer group">
+                                    <input type="checkbox" id="w-all-country" onchange="toggleWorkerAllCountry()"
+                                        class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                    <span
+                                        class="text-xs font-bold text-blue-600 group-hover:text-blue-700 transition">🌍
+                                        בכל הארץ</span>
+                                </label>
+                            </div>
+
+                            <div id="worker-location-fields">
+                                <div class="flex gap-2 mb-3">
+                                    <input type="text" id="w-area-address" class="input-field py-2 text-sm"
+                                        placeholder="עיר מרכזית / כתובת בסיס">
+                                    <button type="button" onclick="geocodeWorkerArea()"
+                                        class="bg-slate-800 text-white px-4 rounded-xl text-sm font-bold">חפש</button>
+                                </div>
+
+                                <div id="worker-area-map"
+                                    class="h-48 w-full rounded-2xl bg-slate-100 z-0 mb-4 border border-slate-200 relative overflow-hidden">
+                                </div>
+
+                                <div class="px-2">
+                                    <div class="flex justify-between text-xs font-bold text-slate-500 mb-2">
+                                        <span>טווח: <span id="radius-val" class="text-blue-600 text-lg">20</span>
+                                            ק"מ</span>
+                                        <span>100 ק"מ</span>
+                                    </div>
+                                    <input type="range" id="w-radius" min="1" max="100" value="20"
+                                        class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                        oninput="updateWorkerCircle()">
+                                </div>
+                            </div>
+                            <input type="hidden" id="w-area-lat">
+                            <input type="hidden" id="w-area-lng">
+                        </div>
+
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                            <label class="text-xs font-bold text-slate-500 mb-3 block">⚙️ הגדרת שעות עבודה</label>
+
+                            <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4">
+                                <div class="text-[10px] font-bold text-slate-400 mb-2 flex justify-between">
+                                    <span>שעות ברירת מחדל (תקף לכל הימים)</span>
+                                    <span>🕒</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <input type="time" id="global-start"
+                                        class="bg-white border border-slate-200 rounded-lg px-2 py-1 text-lg font-bold w-full text-center outline-none focus:border-blue-500"
+                                        value="08:00" onchange="updateScheduleUI()">
+                                    <span class="text-slate-300">-</span>
+                                    <input type="time" id="global-end"
+                                        class="bg-white border border-slate-200 rounded-lg px-2 py-1 text-lg font-bold w-full text-center outline-none focus:border-blue-500"
+                                        value="17:00" onchange="updateScheduleUI()">
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <div class="text-[10px] font-bold text-slate-400 mb-2">סמן ימים פעילים:</div>
+                                <div
+                                    class="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                    <button type="button" onclick="toggleSmartDay(0)" id="s-day-0"
+                                        class="day-btn">א</button>
+                                    <button type="button" onclick="toggleSmartDay(1)" id="s-day-1"
+                                        class="day-btn">ב</button>
+                                    <button type="button" onclick="toggleSmartDay(2)" id="s-day-2"
+                                        class="day-btn">ג</button>
+                                    <button type="button" onclick="toggleSmartDay(3)" id="s-day-3"
+                                        class="day-btn">ד</button>
+                                    <button type="button" onclick="toggleSmartDay(4)" id="s-day-4"
+                                        class="day-btn">ה</button>
+                                    <button type="button" onclick="toggleSmartDay(5)" id="s-day-5"
+                                        class="day-btn">ו</button>
+                                    <button type="button" onclick="toggleSmartDay(6)" id="s-day-6"
+                                        class="day-btn">ש</button>
+                                </div>
+                            </div>
+
+                            <div id="schedule-list" class="space-y-2">
+                            </div>
+
+                            <div class="mt-4 pt-3 border-t border-slate-100 text-center">
+                                <div class="text-[10px] text-slate-400">ככה זה יופיע למעסיקים:</div>
+                                <div id="final-schedule-text" class="text-xs font-bold text-blue-600 mt-1" dir="rtl">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">סוג תשלום</label>
+                                <select id="w-salary-type" class="input-field text-sm">
+                                    <option value="hourly">לפי שעה</option>
+                                    <option value="project">לפי טיפול/שירות</option>
+                                    <option value="global">מחיר גלובלי</option>
+                                </select>
+                            </div>
+                            <div class="flex-1">
+                                <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">מחיר</label>
+                                <div class="input-group">
+                                    <span class="input-icon text-green-600 font-bold">₪</span>
+                                    <input type="number" id="w-rate" class="input-field text-sm font-bold"
+                                        placeholder="50">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">פרטים נוספים ומיומנויות
+                                (תגיות)</label>
+                            <input type="text" id="w-skills" class="input-field text-sm"
+                                placeholder="למשל: יש לי רכב, כלי עבודה, אנגלית שוטפת...">
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 mr-1 mb-1 block">טלפון ליצירת קשר</label>
+                            <input type="tel" id="w-phone" class="input-field text-sm" placeholder="050...">
+                        </div>
+
+                        <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl mt-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-bold text-sm text-amber-900 flex items-center gap-1">🏆 קידום VIP
+                                    (Premium)</span>
+                                <span
+                                    class="text-[10px] bg-amber-200 px-2 py-1 rounded text-amber-900 font-black">מומלץ</span>
+                            </div>
+                            <p class="text-xs text-slate-600 mb-2 font-medium">הופע תמיד בראש הרשימה עם מסגרת זהב!
+                            </p>
+                            <div class="flex items-center gap-1.5 mb-3">
+                                <span
+                                    class="bg-amber-100 text-amber-800 text-[10px] px-2.5 py-1 rounded-full font-black border border-amber-300 flex items-center gap-1">⏱️
+                                    תקף ל-7 ימים (שבוע)</span>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2">
+                                <a href="https://nowpayments.io/payment/?iid=6187338242&source=button" target="_blank"
+                                    rel="noreferrer noopener">
+                                    <img src="https://nowpayments.io/images/embeds/payment-button-white.svg"
+                                        alt="Cryptocurrency & Bitcoin payment button by NOWPayments">
+                                </a>
+                                <button type="button" onclick="handlePayment('paypal', 'worker')"
+                                    class="bg-blue-600 text-white border border-blue-500 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 hover:bg-blue-700 transition shadow-sm">
+                                    🅿️ PayPal
+                                </button>
+                            </div>
+                            <input type="hidden" id="w-premium-until" value="">
+                            <div id="worker-premium-msg"
+                                class="hidden text-xs text-green-700 font-bold mt-2 text-center bg-green-50 p-2 rounded-lg border border-green-200">
+                                ✨ הקידום הופעל! הפרופיל שלך יודגש לשבוע (7 ימים).
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 mt-4">
+                            <button onclick="saveWorkerProfile()"
+                                class="flex-1 bg-black text-white py-3.5 rounded-xl text-sm font-bold shadow-lg hover:bg-slate-800 transition">שמור
+                                ופרסם</button>
+                            <button onclick="toggleWorkerForm()"
+                                class="px-5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-200 transition">ביטול</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white border border-slate-200 p-5 rounded-3xl mb-6 shadow-sm">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-bold flex items-center gap-2 text-slate-800">📍 המיקום שלי</h3>
+                        <span id="user-loc-status"
+                            class="text-xs bg-slate-50 px-2 py-1 rounded text-slate-400 border">לא מוגדר</span>
+                    </div>
+                    <div class="flex gap-2 mb-3">
+                        <input type="text" id="profile-addr-input" class="input-field py-2 text-sm"
+                            placeholder="חפש כתובת או עיר...">
+                        <button onclick="geocodeProfileAddress()"
+                            class="bg-slate-800 text-white px-4 rounded-xl text-sm whitespace-nowrap font-bold">חפש</button>
+                    </div>
+                    <div id="user-map-picker"
+                        class="h-48 w-full rounded-2xl bg-slate-100 z-0 mb-3 border border-slate-200 relative overflow-hidden">
+                    </div>
+                    <div class="flex justify-between gap-2">
+                        <button onclick="getProfileCurrentLocation()"
+                            class="flex-1 bg-indigo-50 text-indigo-700 py-2.5 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-100 transition flex items-center justify-center gap-1">
+                            <span>🎯 מצא אותי</span>
+                        </button>
+                        <button onclick="saveUserProfileLocation()"
+                            class="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 transition shadow-md shadow-indigo-200">
+                            שמור מיקום
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <div class="bg-blue-50 p-4 rounded-2xl text-center border border-blue-100">
+                        <div class="text-3xl font-black text-blue-600" id="my-jobs-count">0</div>
+                        <div class="text-xs text-blue-800 font-bold uppercase tracking-wide mt-1">משרות שפרסמתי
+                        </div>
+                    </div>
+                    <div class="bg-pink-50 p-4 rounded-2xl text-center border border-pink-100">
+                        <div class="text-3xl font-black text-pink-600" id="saved-jobs-count">0</div>
+                        <div class="text-xs text-pink-800 font-bold uppercase tracking-wide mt-1">משרות שמרתי</div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 mb-6">
+                    <h3 class="font-bold mb-4 flex items-center gap-2 text-lg text-slate-800">
+                        <span>⭐</span>
+                        <span>הדירוגים שלי</span>
+                    </h3>
+                    <div id="my-ratings-list" class="space-y-3 min-h-[50px]">
+                        <div
+                            class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                            עדיין לא דירגת 🌟</div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 mb-10">
+                    <h3 class="font-bold mb-4 flex items-center gap-2 text-lg text-slate-800">
+                        <span>❤️</span>
+                        <span>משרות ששמרתי</span>
+                    </h3>
+                    <div id="saved-jobs-list" class="space-y-2 min-h-[50px]"></div>
+                </div>
+            </div>
+
+            <div id="screen-feed" class="hidden-screen px-4 pt-2 fade-in">
+                <button onclick="showScreen('home')" class="back-btn"><span>➔</span> חזרה לראשי</button>
+
+                <div class="search-container-glass p-3 rounded-2xl mb-4 sticky top-4 z-40">
+                    <div class="relative flex gap-2">
+                        <input type="text" id="search-input" oninput="currentJobPage=1; renderJobs()"
+                            class="search-input-glass w-full p-3 pr-10 rounded-xl text-right outline-none font-medium text-slate-700 placeholder:text-slate-400"
+                            placeholder="מה מחפשים היום?" aria-label="חיפוש משרות" autocomplete="off">
+                        <span class="absolute right-3 top-3.5 text-slate-400 opacity-60" aria-hidden="true">🔍</span>
+                        <button onclick="toggleFilterPanel('jobs')"
+                            class="bg-white/50 border border-white/60 p-3 rounded-xl shadow-sm relative active:scale-95 transition hover:bg-white/80">
+                            <span class="text-xl">⚙️</span>
+                            <div id="filter-dot-jobs" class="active-filter-dot"></div>
+                        </button>
+                    </div>
+
+                    <!-- Job Filter Panel -->
+                    <div id="filter-panel" class="filter-panel">
+                        <div class="grid grid-cols-1 gap-5">
+                            <!-- Sort Section (NEW) -->
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">מיין לפי
+                                </div>
+                                <select id="jobs-sort" onchange="checkLocationRequirement('jobs')"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="newest">📅 החדש ביותר</option>
+                                    <option value="closest">📍 הקרוב ביותר אלי</option>
+                                    <option value="salary_desc">💰 שכר (גבוה לנמוך)</option>
+                                    <option value="salary_asc">📉 שכר (נמוך לגבוה)</option>
+                                    <option value="oldest">🕰️ הישן ביותר</option>
+                                </select>
+                                <div id="sort-loc-msg-jobs"
+                                    class="hidden text-[10px] text-red-500 mt-1 flex items-center gap-1 font-bold">
+                                    ⚠️ חובה להגדיר מיקום בפרופיל
+                                </div>
+                            </div>
+
+                            <!-- Distance Slider -->
+                            <div id="dist-filter-container-jobs"
+                                class="opacity-100 transition-opacity duration-300 relative">
+                                <div
+                                    class="filter-section-title flex justify-between items-center text-sm font-bold text-slate-700 mb-2">
+                                    <span>מרחק ממני</span>
+                                    <span id="dist-val-jobs"
+                                        class="text-blue-600 bg-blue-50 px-2 py-0.5 rounded text-xs">ללא
+                                        הגבלה</span>
+                                </div>
+                                <input type="range" id="filter-dist-jobs" min="1" max="100" value="100"
+                                    class="range-slider w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                    aria-label="מרחק מרבי ממני" oninput="updateRangeValue('jobs', this.value)">
+                                <div class="flex justify-between text-[10px] text-slate-400 mt-1 font-medium">
+                                    <span>1 ק"מ</span>
+                                    <span>100 ק"מ</span>
+                                </div>
+
+                                <!-- Overlay for disabled state -->
+                                <div id="dist-overlay-jobs"
+                                    class="hidden absolute inset-0 bg-white/60 z-10 flex items-center justify-center backdrop-blur-[1px] rounded-lg">
+                                    <div
+                                        class="text-xs font-bold text-slate-800 bg-white shadow-sm border px-3 py-1 rounded-full border-slate-200">
+                                        🚫 הגדר מיקום תחילה
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Payment Type Filter (New) -->
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">סוג תשלום
+                                </div>
+                                <select id="filter-payment-type"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="all">הכל</option>
+                                    <option value="hourly">שעתי (לפי שעה)</option>
+                                    <option value="fixed">גלובלי (מחיר קבוע)</option>
+                                </select>
+                            </div>
+
+                            <!-- Price Range -->
+                            <div>
+                                <div
+                                    class="filter-section-title flex justify-between items-center text-sm font-bold text-slate-700 mb-2">
+                                    <span>טווח מחיר לשעה</span>
+                                </div>
+                                <div class="flex gap-3 items-center">
+                                    <div class="relative w-full">
+                                        <span class="absolute right-3 top-2.5 text-slate-400 text-xs">₪</span>
+                                        <input type="number" id="price-min" placeholder="מ-"
+                                            class="w-full p-2 pr-6 bg-slate-50 rounded-lg border border-slate-200 text-sm text-center focus:border-blue-500 outline-none">
+                                    </div>
+                                    <span class="text-slate-300 font-bold">-</span>
+                                    <div class="relative w-full">
+                                        <span class="absolute right-3 top-2.5 text-slate-400 text-xs">₪</span>
+                                        <input type="number" id="price-max" placeholder="עד"
+                                            class="w-full p-2 pr-6 bg-slate-50 rounded-lg border border-slate-200 text-sm text-center focus:border-blue-500 outline-none">
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">תאריך פרסום
+                                </div>
+                                <select id="filter-date"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="all">כל הזמן</option>
+                                    <option value="today">מהיום האחרון</option>
+                                    <option value="week">מהשבוע האחרון</option>
+                                    <option value="month">מהחודש האחרון</option>
+                                </select>
+                            </div>
+
+                            <!-- Items Per Page -->
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">משרות בעמוד</div>
+                                <select id="jobs-per-page"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="10">10 משרות</option>
+                                    <option value="20" selected>20 משרות</option>
+                                    <option value="50">50 משרות</option>
+                                    <option value="100">100 משרות</option>
+                                </select>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="flex gap-3 mt-2 border-t border-slate-50 pt-4">
+                                <button onclick="applyFilters()"
+                                    class="flex-1 bg-gradient-to-r from-blue-600 to-blue-500 text-white py-2.5 rounded-xl font-bold text-sm shadow-md shadow-blue-200 hover:shadow-lg transition active:scale-95">
+                                    החל סינון
+                                </button>
+                                <button onclick="resetFilters()"
+                                    class="px-5 py-2.5 text-slate-500 font-bold text-sm bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition">
+                                    נקה
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center mt-3">
+                        <div class="flex gap-2 overflow-x-auto hide-scrollbar pb-1 flex-1">
+                            <button onclick="setCategory('all')"
+                                class="filter-chip active bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">הכל</button>
+                            <button onclick="setCategory('barber')"
+                                class="filter-chip bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">✂️
+                                מספרות</button>
+                            <button onclick="setCategory('waiter')"
+                                class="filter-chip bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">🍷
+                                מסעדות</button>
+                            <button onclick="setCategory('moving')"
+                                class="filter-chip bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">📦
+                                הובלות</button>
+                            <button onclick="setCategory('general')"
+                                class="filter-chip bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">🛠️
+                                כללי</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="login-hint"
+                    class="hidden bg-blue-600 text-white p-4 rounded-2xl mb-4 text-sm flex justify-between items-center shadow-lg shadow-blue-200 cursor-pointer hover:bg-blue-700 transition"
+                    onclick="showScreen('login')">
+                    <div class="font-bold flex items-center gap-2">🔐 התחבר כדי לשמור משרות ולפרסם</div>
+                    <span class="text-xl">➔</span>
+                </div>
+
+                <div id="location-hint"
+                    class="hidden bg-indigo-600 text-white p-4 rounded-2xl mb-4 text-sm flex justify-between items-center shadow-lg shadow-indigo-200 cursor-pointer hover:bg-indigo-700 transition"
+                    onclick="checkAuthAndNavigate('profile')">
+                    <div class="font-bold">💡 טיפ: הוסף מיקום בפרופיל כדי לראות מה קרוב אליך!</div>
+                    <span class="text-xl">➔</span>
+                </div>
+
+                <div id="jobs-loader" class="text-center py-12 hidden">
+                    <div class="loader mx-auto"></div>
+                    <div class="mt-3 text-slate-400 text-sm font-medium">טוען משרות בזמן אמת...</div>
+                </div>
+                <div id="jobs-container" class="space-y-3 min-h-[50vh]"></div>
+                <div id="jobs-pagination" class="pb-24"></div>
+
+                <button id="fab-post-btn" onclick="checkAuthAndNavigate('post')"
+                    class="fixed bottom-6 left-6 bg-blue-600 text-white h-14 w-14 rounded-full shadow-2xl shadow-blue-500/40 z-50 text-3xl flex items-center justify-center hover:scale-110 transition-transform hover:rotate-90">
+                    <span class="-mt-1">+</span>
+                </button>
+            </div>
+
+            <div id="screen-workers" class="hidden-screen px-4 pt-2 fade-in">
+                <button onclick="showScreen('home')" class="back-btn"><span>➔</span> חזרה לראשי</button>
+
+                <div class="flex items-center justify-between mt-2 mb-3">
+                    <h2 class="text-xl font-black text-slate-800">בעלי מקצוע זמינים</h2>
+                    <button id="btn-manage-worker-profile" onclick="window.editOwnWorkerProfile()"
+                        class="hidden bg-slate-900 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm hover:bg-black transition">
+                        ניהול פרופיל עובד
+                    </button>
+                </div>
+
+                <div class="search-container-glass p-3 rounded-2xl mb-4 sticky top-4 z-40">
+                    <div class="relative flex gap-2">
+                        <input type="text" id="worker-search-input" oninput="currentWorkerPage=1; renderWorkers()"
+                            class="search-input-glass w-full p-3 pr-10 rounded-xl text-right outline-none font-medium text-slate-700 placeholder:text-slate-400"
+                            placeholder="חפש בעל מקצוע, שם או תגית...">
+                        <span class="absolute right-3 top-3.5 text-slate-400 opacity-60">🔍</span>
+                        <button onclick="toggleFilterPanel('workers')"
+                            class="bg-white/50 border border-white/60 p-3 rounded-xl shadow-sm relative active:scale-95 transition hover:bg-white/80">
+                            <span class="text-xl">⚙️</span>
+                            <div id="filter-dot-workers" class="active-filter-dot"></div>
+                        </button>
+                    </div>
+
+                    <!-- Worker Filter Panel -->
+                    <div id="worker-filter-panel" class="filter-panel">
+                        <div class="grid grid-cols-1 gap-5">
+                            <!-- Sort Section -->
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">מיין לפי
+                                </div>
+                                <select id="worker-sort" onchange="checkLocationRequirement('workers')"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="rating_desc">🌟 דירוג (גבוה לנמוך)</option>
+                                    <option value="closest">📍 הכי קרוב אלי</option>
+                                    <option value="price_asc">💰 מחיר (נמוך לגבוה)</option>
+                                    <option value="price_desc">💎 מחיר (גבוה לנמוך)</option>
+                                    <option value="newest">📅 החדשים ביותר</option>
+                                </select>
+                                <div id="sort-loc-msg-workers"
+                                    class="hidden text-[10px] text-red-500 mt-1 flex items-center gap-1 font-bold">
+                                    ⚠️ חובה להגדיר מיקום בפרופיל
+                                </div>
+                            </div>
+
+                            <!-- Distance Slider -->
+                            <div id="dist-filter-container-workers"
+                                class="opacity-100 transition-opacity duration-300 relative">
+                                <div
+                                    class="filter-section-title flex justify-between items-center text-sm font-bold text-slate-700 mb-2">
+                                    <span>מרחק ממני</span>
+                                    <span id="dist-val-workers"
+                                        class="text-blue-600 bg-blue-50 px-2 py-0.5 rounded text-xs">ללא
+                                        הגבלה</span>
+                                </div>
+                                <input type="range" id="filter-dist-workers" min="1" max="100" value="100"
+                                    class="range-slider w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                    aria-label="מרחק מרבי ממני" oninput="updateRangeValue('workers', this.value)">
+                                <div class="flex justify-between text-[10px] text-slate-400 mt-1 font-medium">
+                                    <span>1 ק"מ</span>
+                                    <span>100 ק"מ</span>
+                                </div>
+                                <div id="dist-overlay-workers"
+                                    class="hidden absolute inset-0 bg-white/60 z-10 flex items-center justify-center backdrop-blur-[1px] rounded-lg">
+                                    <div
+                                        class="text-xs font-bold text-slate-800 bg-white shadow-sm border px-3 py-1 rounded-full border-slate-200">
+                                        🚫 הגדר מיקום תחילה
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">דירוג מינימלי</div>
+                                <div class="flex gap-2">
+                                    <button onclick="setRatingFilter(4)" data-rating="4"
+                                        class="rating-btn flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-all hover:border-yellow-400 shadow-sm">
+                                        ⭐️ 4+
+                                    </button>
+                                    <button onclick="setRatingFilter(4.5)" data-rating="4.5"
+                                        class="rating-btn flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-all hover:border-yellow-400 shadow-sm">
+                                        ⭐️ 4.5+
+                                    </button>
+                                    <button onclick="setRatingFilter(5)" data-rating="5"
+                                        class="rating-btn flex-1 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-all hover:border-yellow-400 shadow-sm">
+                                        ⭐️ 5
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Items Per Page -->
+                            <div>
+                                <div class="filter-section-title text-sm font-bold text-slate-700 mb-2">עובדים בעמוד</div>
+                                <select id="workers-per-page"
+                                    class="w-full p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm font-medium focus:border-blue-500 outline-none">
+                                    <option value="10">10 עובדים</option>
+                                    <option value="20" selected>20 עובדים</option>
+                                    <option value="50">50 עובדים</option>
+                                    <option value="100">100 עובדים</option>
+                                </select>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="flex gap-3 mt-2 border-t border-slate-50 pt-4">
+                                <button onclick="applyWorkerFilters()"
+                                    class="flex-1 bg-gradient-to-r from-blue-600 to-blue-500 text-white py-2.5 rounded-xl font-bold text-sm shadow-md shadow-blue-200 hover:shadow-lg transition active:scale-95">
+                                    החל סינון
+                                </button>
+                                <button onclick="resetWorkerFilters()"
+                                    class="px-5 py-2.5 text-slate-500 font-bold text-sm bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition">
+                                    נקה
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center mt-3">
+                        <div class="flex gap-2 overflow-x-auto hide-scrollbar pb-1 flex-1">
+                            <button onclick="toggleWorkerRangeFilter()" id="btn-filter-range"
+                                class="filter-chip bg-slate-100 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap flex items-center gap-1 border border-slate-200">
+                                📍 באזורך
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="worker-promo-banner" onclick="checkAuthAndNavigate('profile')"
+                    class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 rounded-2xl shadow-lg mb-4 cursor-pointer relative overflow-hidden group">
+                    <div
+                        class="absolute top-0 left-0 w-full h-full bg-white opacity-0 group-hover:opacity-10 transition">
+                    </div>
+                    <div
+                        class="relative z-10 flex flex-col sm:flex-row justify-between items-center gap-3 text-center sm:text-right">
+                        <div>
+                            <div class="font-bold text-lg">בעל מקצוע? 👷</div>
+                            <div class="text-blue-100 text-xs mt-1">לחץ ליצירת פרופיל עובד והצטרפות למאגר</div>
+                        </div>
+                        <div
+                            class="bg-white/20 p-2 rounded-full backdrop-blur-sm px-6 font-bold text-sm whitespace-nowrap shadow-sm border border-white/10">
+                            הצטרף עכשיו
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manage Worker Profile Button (Shown when already a worker) -->
+                <button id="btn-manage-worker-profile" onclick="window.editOwnWorkerProfile()"
+                    class="hidden w-full bg-white border-2 border-blue-600 text-blue-700 py-4 font-bold text-sm shadow-md hover:bg-blue-50 transition active:scale-95 flex items-center justify-center gap-3 mb-6 group rounded-3xl p-4">
+                    <span
+                        class="bg-blue-600 text-white p-2 rounded-xl group-hover:scale-110 transition shadow-sm">👷</span>
+                    <div class="text-right">
+                        <div class="text-[10px] opacity-70 font-bold">אתה רשום כבעל מקצוע</div>
+                        <div class="text-base font-black">נהל את הפרופיל שלך</div>
+                    </div>
+                </button>
+
+                <div id="workers-container" class="space-y-3 min-h-[50vh]">
+                    <div class="text-center py-10 text-slate-400">טוען פרופילים...</div>
+                </div>
+                <div id="workers-pagination" class="pb-24"></div>
+            </div>
+
+            <div id="screen-post" class="hidden-screen px-4 pt-4 fade-in pb-10">
+                <button onclick="showScreen('home')" class="back-btn"><span>➔</span> חזרה לראשי</button>
+
+                <div id="post-form-container">
+                    <h2 id="post-screen-title" class="text-3xl font-black mb-6 text-slate-800">יצירת משרה חדשה</h2>
+                    <form id="post-form" class="space-y-5">
+                        <!-- Honeypot -->
+                        <input type="text" id="hp-job" style="display:none !important" tabindex="-1" autocomplete="off">
+                        <div class="input-group">
+                            <span class="input-icon">✏️</span>
+                            <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">כותרת המשרה</label>
+                            <input type="text" id="p-title" required class="input-field" placeholder="דרוש עובד ל...">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">קטגוריה</label>
+                                <select id="p-category" class="input-field">
+                                    <option value="general">🛠️ כללי</option>
+                                    <option value="barber">✂️ ספר/מספרה</option>
+                                    <option value="waiter">🍷 מסעדות</option>
+                                    <option value="moving">📦 הובלות</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">טלפון</label>
+                                <input type="tel" id="p-phone" required class="input-field" placeholder="050...">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="col-span-2 sm:col-span-1">
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">סוג תשלום</label>
+                                <select id="p-salary-type" onchange="toggleHoursInput()" class="input-field">
+                                    <option value="hourly">₪ לפי שעה</option>
+                                    <option value="fixed">💰 מחיר קבוע (גלובלי)</option>
+                                </select>
+                            </div>
+                            <div class="col-span-2 sm:col-span-1">
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block"
+                                    id="lbl-rate">תעריף</label>
+                                <input type="number" id="p-rate" min="1" required class="input-field" placeholder="₪">
+                            </div>
+                            <div class="col-span-2" id="div-hours">
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">שעות מוערך</label>
+                                <input type="number" id="p-hours" min="1" class="input-field" placeholder="שעות">
+                            </div>
+                            <div class="col-span-2 flex gap-3">
+                                <div class="flex-1">
+                                    <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">תאריך סיום
+                                        (למחיקה)</label>
+                                    <input type="date" id="p-date" class="input-field" required>
+                                </div>
+                                <div class="w-1/3">
+                                    <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">עד שעה</label>
+                                    <input type="time" id="p-time" class="input-field">
+                                </div>
+                            </div>
+
+                            <div class="mt-4">
+                                <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">אופן תשלום</label>
+                                <select id="p-payment-method" class="input-field appearance-none" required>
+                                    <option value="cash">💵 מזומן</option>
+                                    <option value="bit">📱 ביט / אפליקציה</option>
+                                    <option value="transfer">🏦 העברה בנקאית</option>
+                                    <option value="credit">💳 אשראי / חשבונית</option>
+                                    <option value="check">📝 צ'ק</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="text-xs font-bold text-slate-500 block">מיקום (חפש או סמן במפה)</label>
+                                <label class="flex items-center gap-2 cursor-pointer group">
+                                    <input type="checkbox" id="p-all-country" onchange="toggleJobAllCountry()"
+                                        class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                    <span
+                                        class="text-xs font-bold text-blue-600 group-hover:text-blue-700 transition">🌍
+                                        בכל הארץ</span>
+                                </label>
+                            </div>
+
+                            <div id="job-location-fields" class="fade-in">
+                                <div class="flex gap-2 mb-3">
+                                    <input type="text" id="p-address-input" class="input-field py-2 text-sm"
+                                        placeholder="עיר/כתובת">
+                                    <button type="button" onclick="geocodeAddress()"
+                                        class="bg-slate-800 text-white px-5 rounded-xl text-sm whitespace-nowrap font-bold hover:bg-black transition">חפש</button>
+                                </div>
+                                <div id="map-picker"
+                                    class="h-44 w-full rounded-xl bg-slate-100 z-0 relative border border-slate-200">
+                                </div>
+                            </div>
+                            <input type="hidden" id="p-lat"><input type="hidden" id="p-lng">
+                            <div id="loc-status"
+                                class="text-xs text-red-500 mt-2 font-bold bg-red-50 p-2 rounded-lg inline-block border border-red-100">
+                                ⚠️ חובה לבחור מיקום על המפה</div>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-bold text-slate-500 mr-1 mb-1 block">פירוט נוסף</label>
+                            <textarea id="p-desc" rows="3" required class="input-field"
+                                placeholder="תיאור העבודה, דרישות מיוחדות..."></textarea>
+                        </div>
+
+                        <div class="bg-amber-50 border border-amber-200 p-5 rounded-2xl">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-bold text-sm text-amber-900 flex items-center gap-1">🚀 קדם משרה
+                                    (Premium)</span>
+                                <span
+                                    class="text-[10px] bg-amber-200 px-2 py-1 rounded text-amber-900 font-black">מומלץ</span>
+                            </div>
+                            <p class="text-xs text-slate-600 mb-2 font-medium">קבל פי 3 יותר פניות! המשרה תודגש
+                                במסגרת
+                                זהב ותופיע בראשונים, ב- 20 ש"ח בלבד</p>
+                            <div class="flex items-center gap-1.5 mb-4">
+                                <span
+                                    class="bg-amber-100 text-amber-800 text-[10px] px-2.5 py-1 rounded-full font-black border border-amber-300 flex items-center gap-1">⏱️
+                                    תקף ל-7 ימים (שבוע)</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <a href="https://nowpayments.io/payment/?iid=6187338242&source=button" target="_blank"
+                                    rel="noreferrer noopener">
+                                    <img src="https://nowpayments.io/images/embeds/payment-button-white.svg"
+                                        alt="Cryptocurrency & Bitcoin payment button by NOWPayments">
+                                </a>
+                                <button type="button" onclick="handlePayment('paypal', 'job')"
+                                    class="flex-1 bg-blue-600 text-white border border-blue-500 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 hover:bg-blue-700 transition">🅿️
+                                    PayPal</button>
+                            </div>
+                            <input type="hidden" id="p-is-premium" value="false">
+                            <div id="job-premium-msg"
+                                class="hidden text-xs text-green-700 font-bold mt-3 text-center bg-green-50 p-2 rounded-lg border border-green-200">
+                                ✨ שולם בהצלחה! המשרה תפורסם כפרימיום.
+                            </div>
+                        </div>
+
+                        <div class="bg-red-50 border border-red-100 p-4 rounded-2xl">
+                            <p class="text-xs text-red-600 font-bold text-center leading-relaxed">
+                                ⚠️ אזהרה: פרסום תוכן לא הולם (מין, אלימות, קללות) יגרום לחסימה מיידית וקבועה של
+                                החשבון.
+                            </p>
+                        </div>
+
+                        <button type="button" id="submit-job-btn" onclick="publishJob()"
+                            class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 mt-2 hover:bg-blue-700 transition transform active:scale-95">
+                            פרסם משרה עכשיו
+                        </button>
+                        <button type="button" id="cancel-edit-btn" onclick="cancelEdit()"
+                            class="hidden w-full text-slate-500 font-bold p-3 hover:text-slate-700">ביטול
+                            עריכה</button>
+                    </form>
+                </div>
+
+                <div id="blocked-screen"
+                    class="hidden flex flex-col items-center justify-center h-[60vh] text-center p-4">
+                    <div class="text-7xl mb-6">🚫</div>
+                    <h3 class="text-3xl font-black text-red-600 mb-2">החשבון נחסם</h3>
+                    <p class="text-slate-600 font-medium">האפשרות לפרסם משרות נחסמה עקב ניסיון לפרסום תוכן לא הולם.
+                    </p>
+                </div>
+            </div>
+
+            <div id="screen-job-details" class="hidden-screen fixed inset-0 bg-white z-[100] overflow-y-auto fade-in">
+                <div class="h-72 w-full bg-slate-200 relative">
+                    <div id="map-view" class="h-full w-full z-0"></div>
+                    <div
+                        class="absolute top-0 left-0 w-full h-full bg-gradient-to-t from-black/60 to-transparent pointer-events-none z-[400]">
+                    </div>
+                    <button onclick="closeDetails()"
+                        class="absolute top-6 right-6 bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg z-[999] hover:bg-white transition active:scale-90">✕</button>
+                </div>
+
+                <div
+                    class="p-8 -mt-12 bg-white rounded-t-[2.5rem] relative z-[500] min-h-screen shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
+                    <div class="flex justify-between items-start mb-3">
+                        <div id="d-category"
+                            class="text-xs font-bold bg-slate-100 px-3 py-1.5 rounded-lg text-slate-600 border border-slate-200">
+                        </div>
+                        <div id="d-time" class="text-xs text-slate-400 font-medium"></div>
+                    </div>
+
+                    <h2 id="d-title" class="text-3xl font-black mb-6 break-words leading-tight text-slate-900"></h2>
+
+                    <div
+                        class="bg-blue-50 p-6 rounded-3xl flex justify-between items-center mb-8 border border-blue-100 shadow-sm">
+                        <div>
+                            <div class="text-xs text-blue-600 font-bold uppercase tracking-wide mb-1">סה"כ לתשלום
+                            </div>
+                            <div class="text-4xl font-black text-blue-600">₪<span id="d-total"></span></div>
+                        </div>
+                        <div class="text-left border-r border-blue-200 pr-6">
+                            <div class="font-bold text-slate-800 text-lg" id="d-rate-container">₪<span
+                                    id="d-rate"></span>
+                            </div>
+                            <div class="text-sm text-slate-500 font-medium" id="d-hours-container"><span
+                                    id="d-hours"></span> שעות עבודה</div>
+                            <div class="text-[10px] text-blue-500 font-bold mt-1" id="d-payment-type-display"></div>
+                            <div class="text-[11px] text-emerald-600 font-bold mt-1 bg-emerald-50 px-2 py-0.5 rounded inline-block"
+                                id="d-payment-method-display"></div>
+                        </div>
+                    </div>
+
+                    <h3 class="font-bold mb-3 text-slate-800 text-lg">תיאור המשרה</h3>
+                    <p id="d-desc"
+                        class="text-slate-600 mb-4 bg-slate-50 p-5 rounded-2xl break-words text-sm leading-relaxed border border-slate-100">
+                    </p>
+
+                    <!-- Contact email box - visible to all -->
+                    <div id="d-email-container"
+                        class="mb-8 p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-center justify-between gap-2">
+                        <div>
+                            <div class="text-xs text-blue-700 font-bold mb-0.5">📧 דוא"ל יוצר המשרה</div>
+                            <div id="d-contact-email" class="text-sm text-blue-800 font-bold break-all" dir="ltr">—
+                            </div>
+                        </div>
+                        <button
+                            onclick="if(document.getElementById('d-contact-email').innerText&&document.getElementById('d-contact-email').innerText!='—'){navigator.clipboard.writeText(document.getElementById('d-contact-email').innerText);showNotification('האימייל הועתק!')}"
+                            class="text-blue-600 bg-white border border-blue-200 rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-blue-50 transition active:scale-95"
+                            aria-label="העתק אימייל מפרסם המשרה">העתק</button>
+                    </div>
+
+                    <div class="space-y-4 mb-10">
+                        <button id="btn-whatsapp" onclick="logAnalytics('contact_whatsapp')"
+                            class="w-full bg-[#25D366] text-white py-4 rounded-2xl font-bold flex justify-center items-center gap-2 shadow-lg shadow-green-200 hover:brightness-105 transition transform active:scale-95 text-lg">
+                            <span>💬 שלח הודעה למעסיק</span>
+                        </button>
+                        <div class="grid grid-cols-2 gap-3">
+                            <a id="btn-waze" href="#" target="_blank"
+                                class="bg-blue-50 text-blue-700 py-3.5 rounded-2xl font-bold text-center border border-blue-100 hover:bg-blue-100 transition">🚙
+                                Waze</a>
+                            <a id="btn-google" href="#" target="_blank"
+                                class="bg-slate-50 text-slate-700 py-3.5 rounded-2xl font-bold text-center border border-slate-200 hover:bg-slate-100 transition">🗺️
+                                Maps</a>
+                        </div>
+
+                        <!-- Report Button (Only for non-owners) -->
+                        <div id="report-job-section" class="mt-4">
+                            <button onclick="openReportModal('business')"
+                                class="w-full bg-red-50 text-red-600 py-3 rounded-2xl font-bold text-sm border border-red-200 hover:bg-red-100 transition flex items-center justify-center gap-2">
+                                <span>🚨</span>
+                                <span>דווח על תוכן בעייתי</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="owner-actions" class="hidden border-t border-slate-100 pt-8 space-y-3">
+                        <div
+                            class="text-center text-xs text-amber-700 mb-2 font-bold bg-amber-50 p-2 rounded-lg border border-amber-100">
+                            ⚡ ניהול משרה (גלוי לך כמנהל/בעלים)</div>
+                        <button onclick="startEditJob()"
+                            class="w-full bg-slate-800 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-slate-200 hover:bg-slate-900 transition">📝
+                            ערוך פרטים</button>
+                        <button onclick="deleteCurrentJob()"
+                            class="w-full text-red-500 font-bold py-3.5 bg-red-50 rounded-2xl border border-red-100 hover:bg-red-100 transition">🗑️
+                            מחק מודעה</button>
+                    </div>
+
+                    <!-- Rating Section -->
+                    <div class="rating-container mt-6">
+                        <div class="relative z-10">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="font-bold text-lg text-amber-900 flex items-center gap-2">
+                                    <span class="text-2xl">⭐</span>
+                                    <span>דרג את המעסיק</span>
+                                </h3>
+                                <div id="rating-display-badge" class="rating-badge text-sm">
+                                    0 דירוגים
+                                </div>
+                            </div>
+
+                            <div id="job-rating-stars" class="flex gap-3 justify-center py-4">
+                                <span class="rating-star text-5xl text-slate-300" data-score="1">☆</span>
+                                <span class="rating-star text-5xl text-slate-300" data-score="2">☆</span>
+                                <span class="rating-star text-5xl text-slate-300" data-score="3">☆</span>
+                                <span class="rating-star text-5xl text-slate-300" data-score="4">☆</span>
+                                <span class="rating-star text-5xl text-slate-300" data-score="5">☆</span>
+                            </div>
+
+                            <div class="rating-instruction">
+                                ⬆️ לחץ על כוכב כדי לדרג את המעסיק
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="h-10"></div>
+                </div>
+            </div>
+
+
+            <div id="screen-admin" class="hidden-screen px-4 pt-4 fade-in pb-24">
+                <button onclick="showScreen('profile')" class="back-btn"><span>➔</span> חזרה לפרופיל</button>
+
+                <h2 class="text-3xl font-black mb-6 text-slate-800">לוח בקרה & סטטיסטיקות</h2>
+
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                        <div class="text-3xl font-black text-blue-600" id="adm-total-users">0</div>
+                        <div class="text-xs text-slate-500 font-bold uppercase mt-1">ביקורים היום</div>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                        <div class="text-3xl font-black text-green-600" id="adm-conversions">0</div>
+                        <div class="text-xs text-slate-500 font-bold uppercase mt-1">יצירת קשר (כמות)</div>
+                    </div>
+                </div>
+
+                <!-- Blocked Users Section -->
+                <!-- User Management Section -->
+                <!-- User Management Section -->
+                <div class="mb-6 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-slate-800 text-lg">👥 ניהול משתמשים</h3>
+                        <button onclick="loadAllUsers(); showNotification('רשימת המשתמשים נטענה מחדש')"
+                            class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold transition border border-blue-200 flex items-center gap-1">
+                            🔄 רענן רשימה
+                        </button>
+                    </div>
+
+                    <div class="mb-4 relative">
+                        <input type="text" id="admin-user-search" oninput="filterUsersList()"
+                            placeholder="חפש לפי שם, אימייל, טלפון או UID..."
+                            class="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl pl-4 pr-12 py-4 text-base focus:border-blue-500 outline-none transition shadow-sm focus:shadow-md font-medium">
+                        <div
+                            class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-slate-400 text-xl">
+                            🔍
+                        </div>
+                    </div>
+
+                    <!-- Results Container (Initially Empty) -->
+                    <div id="users-list-container" class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar">
+                        <!-- Results will appear here dynamically -->
+                    </div>
+
+                    <!-- Placeholder (Shown when empty) -->
+                    <div id="no-users-placeholder"
+                        class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        התחל להקליד כדי לחפש משתמשים...
+                    </div>
+                </div>
+
+                <!-- Workers Management Section -->
+                <div class="mb-6 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-slate-800 text-lg">👷 ניהול בעלי מקצוע</h3>
+                        <button onclick="filterAdminWorkersList(true)"
+                            class="bg-slate-50 hover:bg-slate-100 text-slate-600 px-3 py-2 rounded-xl text-xs font-bold transition border border-slate-200"
+                            aria-label="הצג כל בעלי המקצוע">🔄 הצג הכל</button>
+                    </div>
+                    <div class="mb-4 relative">
+                        <input type="text" id="admin-worker-search" oninput="filterAdminWorkersList()"
+                            placeholder="חפש לפי שם, מקצוע או UID..." aria-label="חיפוש בעל מקצוע"
+                            class="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl pr-4 pl-10 py-3 text-sm focus:border-blue-500 outline-none transition font-medium">
+                        <span
+                            class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none"
+                            aria-hidden="true">🔍</span>
+                    </div>
+                    <div id="admin-workers-list-container" class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar"
+                        role="list"></div>
+                    <div id="no-workers-placeholder"
+                        class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        הקלד לחיפוש או לחץ "הצג הכל"
+                    </div>
+                </div>
+
+                <!-- Jobs Management Section -->
+                <div class="mb-6 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-slate-800 text-lg">💼 ניהול משרות</h3>
+                        <button onclick="filterAdminJobsList(true)"
+                            class="bg-slate-50 hover:bg-slate-100 text-slate-600 px-3 py-2 rounded-xl text-xs font-bold transition border border-slate-200"
+                            aria-label="הצג כל המשרות">🔄 הצג הכל</button>
+                    </div>
+                    <div class="mb-4 relative">
+                        <input type="text" id="admin-job-search" oninput="filterAdminJobsList()"
+                            placeholder="חפש לפי כותרת, שם מפרסם..." aria-label="חיפוש משרה"
+                            class="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl pr-4 pl-10 py-3 text-sm focus:border-blue-500 outline-none transition font-medium">
+                        <span
+                            class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none"
+                            aria-hidden="true">🔍</span>
+                    </div>
+                    <div id="admin-jobs-list-container" class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar"
+                        role="list"></div>
+                    <div id="no-jobs-placeholder"
+                        class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        הקלד לחיפוש או לחץ "הצג הכל"
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
+                    <h3 class="font-bold text-lg mb-4 text-slate-800">📊 משפך המרה (Funnel)</h3>
+                    <div class="space-y-4">
+                        <div class="relative pt-1">
+                            <div class="flex mb-2 item-center justify-between">
+                                <div><span
+                                        class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-blue-600 bg-blue-200">
+                                        כניסה לאפליקציה (Home)
+                                    </span></div>
+                                <div class="text-right">
+                                    <span class="text-xs font-semibold inline-block text-blue-600"
+                                        id="funnel-home-val">0</span>
+                                </div>
+                            </div>
+                            <div class="flex h-2 mb-4 overflow-hidden text-xs bg-blue-50 rounded">
+                                <div style="width:100%"
+                                    class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="relative pt-1">
+                            <div class="flex mb-2 item-center justify-between">
+                                <div><span
+                                        class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
+                                        צפייה בלוח (Feed)
+                                    </span></div>
+                                <div class="text-right">
+                                    <span class="text-xs font-semibold inline-block text-indigo-600"
+                                        id="funnel-feed-val">0</span>
+                                </div>
+                            </div>
+                            <div class="flex h-2 mb-4 overflow-hidden text-xs bg-indigo-50 rounded">
+                                <div id="funnel-feed-bar" style="width:0%"
+                                    class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="relative pt-1">
+                            <div class="flex mb-2 item-center justify-between">
+                                <div><span
+                                        class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-purple-600 bg-purple-200">
+                                        צפייה במשרה (Details)
+                                    </span></div>
+                                <div class="text-right">
+                                    <span class="text-xs font-semibold inline-block text-purple-600"
+                                        id="funnel-details-val">0</span>
+                                </div>
+                            </div>
+                            <div class="flex h-2 mb-4 overflow-hidden text-xs bg-purple-50 rounded">
+                                <div id="funnel-details-bar" style="width:0%"
+                                    class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-purple-500 transition-all duration-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="relative pt-1">
+                            <div class="flex mb-2 item-center justify-between">
+                                <div><span
+                                        class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-green-600 bg-green-200">
+                                        יצירת קשר (Contact)
+                                    </span></div>
+                                <div class="text-right">
+                                    <span class="text-xs font-semibold inline-block text-green-600"
+                                        id="funnel-contact-val">0</span>
+                                </div>
+                            </div>
+                            <div class="flex h-2 mb-4 overflow-hidden text-xs bg-green-50 rounded">
+                                <div id="funnel-contact-bar" style="width:0%"
+                                    class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500 transition-all duration-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900 text-white rounded-3xl p-6 shadow-lg mb-6">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                        <span>🧬 A/B Testing Results</span>
+                    </h3>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white/10 p-4 rounded-2xl border border-white/10">
+                            <div class="text-xs text-slate-400 font-bold mb-1">Group A (Control)</div>
+                            <div class="text-2xl font-black mb-1" id="ab-a-rate">0%</div>
+                            <div class="text-[10px] text-slate-500">Conversion Rate</div>
+                        </div>
+                        <div class="bg-white/10 p-4 rounded-2xl border border-white/10">
+                            <div class="text-xs text-yellow-400 font-bold mb-1">Group B (Variant)</div>
+                            <div class="text-2xl font-black mb-1" id="ab-b-rate">0%</div>
+                            <div class="text-[10px] text-slate-500">Conversion Rate</div>
+                        </div>
+                    </div>
+                    <div class="mt-4 text-xs text-slate-400">
+                        * נמדד לפי אחוז משתמשים שיצרו קשר מתוך סך הצפיות במשרה.
+                    </div>
+                </div>
+
+                <div class="bg-red-50 rounded-3xl p-6 shadow-lg border border-red-200 mb-6">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2 text-red-800">
+                        <span>🚨</span>
+                        <span>דיווחים ממשתמשים</span>
+                    </h3>
+
+                    <div id="reports-container" class="space-y-3">
+                        <div class="text-center text-slate-400 text-sm py-8">טוען דיווחים...</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Report Modal -->
+    <div id="report-modal"
+        class="hidden fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+        onclick="closeReportModal()">
+        <div class="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                    <span>🚨</span>
+                    <span>דיווח על תוכן בעייתי</span>
+                </h3>
+                <button onclick="closeReportModal()" class="text-slate-400 hover:text-slate-600 text-2xl">✕</button>
+            </div>
+
+            <div class="mb-4">
+                <p class="text-sm text-slate-600 mb-4">נא לתאר את הבעיה בפירוט. הדיווח יישלח למנהלי המערכת.</p>
+
+                <textarea id="report-reason"
+                    class="w-full p-4 border border-slate-200 rounded-xl resize-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                    rows="5" placeholder="למשל: תוכן פוגעני, מידע כוזב, הטרדה, וכו'"></textarea>
+            </div>
+
+            <div class="flex gap-3">
+                <button onclick="closeReportModal()"
+                    class="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-200 transition">
+                    ביטול
+                </button>
+                <button onclick="submitReport()"
+                    class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-700 transition">
+                    שלח דיווח
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screen Payment Verify (Popup) -->
+    <div id="screen-payment-verify"
+        class="hidden-screen fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center fade-in">
+        <div class="bg-white w-full max-w-md p-6 rounded-3xl m-4 relative shadow-2xl">
+            <button onclick="closePaymentVerify()"
+                class="absolute top-4 left-4 text-slate-400 hover:text-slate-600 font-bold p-2">✕</button>
+            <div class="text-center">
+                <div class="text-4xl mb-2">₿</div>
+                <h3 class="text-2xl font-black text-slate-800 mb-2">אימות תשלום בביטקוין</h3>
+                <p class="text-sm text-slate-500 mb-6 font-medium">העבר את הסכום הנדרש לארנק, והדבק את מזהה העסקה
+                    (TXID)
+                    לאימות מיידי.</p>
+
+                <div class="bg-slate-50 p-4 rounded-xl mb-4 text-left border border-slate-200">
+                    <div class="text-xs text-slate-400 font-bold mb-1">כתובת הארנק להעברה:</div>
+                    <div class="flex items-center gap-2">
+                        <code
+                            class="text-xs text-slate-800 flex-1 break-all font-mono select-all font-bold bg-white p-2 rounded border border-slate-100">bc1qtdjehh8h09dy7umzxmsxdwdg0rv3lv83u9cprs</code>
+                        <button onclick="copyWallet(event)"
+                            class="bg-white border hover:bg-slate-100 p-2 rounded-lg text-xs shadow-sm active:scale-95 transition">📋
+                            העתק</button>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-right text-xs font-bold text-slate-700 mb-2">Transaction ID
+                        (TXID)</label>
+                    <input type="text" id="verify-txid"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm focus:border-blue-500 outline-none font-mono text-center dir-ltr"
+                        placeholder="Paste TXID here...">
+                    <p class="text-[10px] text-slate-400 text-right mt-1">תוכל למצוא את המזהה בארנק שלך אחרי השליחה
+                    </p>
+                </div>
+
+                <button onclick="checkTxid()" id="btn-verify-tx"
+                    class="w-full bg-orange-500 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-orange-200 hover:bg-orange-600 transition flex items-center justify-center gap-2">
+                    <span>אמת תשלום</span>
+                </button>
+
+                <div id="verify-status" class="mt-4 text-sm font-bold min-h-[20px]"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screen Payment PayPal (Popup) -->
+    <div id="screen-payment-paypal"
+        class="hidden-screen fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center fade-in">
+        <div class="bg-white w-full max-w-md p-6 rounded-3xl m-4 relative shadow-2xl">
+            <button onclick="closePaymentPayPal()"
+                class="absolute top-4 left-4 text-slate-400 hover:text-slate-600 font-bold p-2">✕</button>
+            <div class="text-center">
+                <div class="text-4xl mb-4 text-blue-600">🅿️</div>
+                <h3 class="text-2xl font-black text-slate-800 mb-2">תשלום מאובטח ב-PayPal</h3>
+                <p class="text-sm text-slate-500 mb-6 font-medium">הפיצ'רים ייפתחו אוטומטית מיד לאחר התשלום.</p>
+
+                <div id="paypal-button-container" class="min-h-[150px]">
+                    <div class="animate-pulse flex flex-col gap-2">
+                        <div class="h-12 bg-slate-100 rounded-lg w-full"></div>
+                        <div class="h-12 bg-slate-100 rounded-lg w-full"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script type="module" src="firebase-init.js"></script>
+</body>
+
+</html>

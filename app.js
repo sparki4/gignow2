@@ -1,0 +1,4164 @@
+        setTimeout(function () {
+            if (!window.fb) {
+                console.error('Firebase module did not initialize');
+                var c = document.getElementById('jobs-container');
+                if (c) c.innerHTML = '<div style="text-align:center;padding:40px;color:#e53e3e;font-weight:bold;">⚠️ שגיאת חיבור - נא לרענן את הדף</div>';
+                var w = document.getElementById('workers-container');
+                if (w) w.innerHTML = '<div style="text-align:center;padding:40px;color:#e53e3e;font-weight:bold;">⚠️ שגיאת חיבור - נא לרענן את הדף</div>';
+            }
+        }, 6000);
+
+        // Global State
+        let currentCategory = 'all';
+        let savedJobs = JSON.parse(localStorage.getItem('jobsnap_saved')) || [];
+        let userLocation = JSON.parse(localStorage.getItem('jobsnap_user_loc')) || null;
+        let openJobId = null;
+        let isEditing = false;
+        let mapPicker, markerPicker, mapView;
+        let userMapPicker, userMarkerPicker;
+        let workerMap, workerMarker, workerCircle;
+        let filterInRange = false;
+
+        // --- Auto Geolocation on Site Entry ---
+        (function autoRequestGeolocation() {
+            // Only request if user hasn't set location yet
+            if (!userLocation && navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function (pos) {
+                        const { latitude, longitude } = pos.coords;
+                        userLocation = { lat: latitude, lng: longitude };
+                        localStorage.setItem('jobsnap_user_loc', JSON.stringify(userLocation));
+                        console.log('[AutoGeo] Location set automatically:', latitude, longitude);
+                        // Update UI if profile screen is visible
+                        if (typeof updateLocationUI === 'function') updateLocationUI();
+                        // Re-render job/worker lists to include distance data
+                        if (window.renderJobs) window.renderJobs();
+                        if (window.renderWorkers) window.renderWorkers();
+                    },
+                    function (err) {
+                        console.log('[AutoGeo] Permission denied or error:', err.message);
+                        // Show a subtle reminder after a delay if location is still not set
+                        setTimeout(function () {
+                            if (!userLocation) {
+                                showLocationReminder();
+                            }
+                        }, 5000);
+                    },
+                    { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+                );
+            }
+        })();
+
+        // --- Location Reminder ---
+        function showLocationReminder() {
+            // Don't show if already dismissed recently
+            const lastDismissed = localStorage.getItem('jobsnap_loc_reminder_dismissed');
+            if (lastDismissed) {
+                const hoursSinceDismiss = (Date.now() - parseInt(lastDismissed)) / (1000 * 60 * 60);
+                if (hoursSinceDismiss < 24) return; // Don't show again within 24 hours
+            }
+
+            const reminder = document.createElement('div');
+            reminder.id = 'location-reminder-popup';
+            reminder.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:9999;max-width:360px;width:90%;animation:slideIn 0.3s ease-out;';
+            const inner = document.createElement('div');
+            inner.style.cssText = 'background:linear-gradient(135deg,#4f46e5,#7c3aed);color:white;padding:16px 20px;border-radius:20px;box-shadow:0 10px 40px rgba(79,70,229,0.4);display:flex;align-items:center;gap:12px;';
+            const icon = document.createElement('div');
+            icon.style.cssText = 'font-size:28px;flex-shrink:0;';
+            icon.textContent = '📍';
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = 'flex:1;';
+            const t1 = document.createElement('div');
+            t1.style.cssText = 'font-weight:800;font-size:14px;margin-bottom:2px;';
+            t1.textContent = 'הגדר מיקום לחוויה טובה יותר';
+            const t2 = document.createElement('div');
+            t2.style.cssText = 'font-size:11px;opacity:0.85;';
+            t2.textContent = 'ראה משרות ועובדים קרובים אליך';
+            textWrap.appendChild(t1);
+            textWrap.appendChild(t2);
+            const btnLater = document.createElement('button');
+            btnLater.type = 'button';
+            btnLater.style.cssText = 'background:rgba(255,255,255,0.2);border:none;color:white;padding:6px 12px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;';
+            btnLater.textContent = 'אחר כך';
+            btnLater.addEventListener('click', () => window.dismissLocationReminder());
+            const btnGo = document.createElement('button');
+            btnGo.type = 'button';
+            btnGo.style.cssText = 'background:white;border:none;color:#4f46e5;padding:6px 12px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;';
+            btnGo.textContent = 'הגדר';
+            btnGo.addEventListener('click', () => window.goToProfileForLocation());
+            inner.appendChild(icon);
+            inner.appendChild(textWrap);
+            inner.appendChild(btnLater);
+            inner.appendChild(btnGo);
+            reminder.appendChild(inner);
+            document.body.appendChild(reminder);
+
+            // Auto-dismiss after 15 seconds
+            setTimeout(function () {
+                const el = document.getElementById('location-reminder-popup');
+                if (el) el.remove();
+            }, 15000);
+        }
+
+        window.dismissLocationReminder = function () {
+            localStorage.setItem('jobsnap_loc_reminder_dismissed', Date.now().toString());
+            const el = document.getElementById('location-reminder-popup');
+            if (el) el.remove();
+        }
+
+        window.goToProfileForLocation = function () {
+            const el = document.getElementById('location-reminder-popup');
+            if (el) el.remove();
+            if (window.currentUser) {
+                showScreen('profile');
+            } else {
+                showScreen('login');
+            }
+        }
+
+        // --- Pagination State ---
+        let currentJobPage = 1;
+        let jobItemsPerPage = 20;
+        let currentWorkerPage = 1;
+        let workerItemsPerPage = 20;
+
+        // --- ניהול ימי עבודה חכם ---
+        let scheduleState = {
+            selectedDays: [0, 1, 2, 3, 4], // ברירת מחדל א-ה
+            customHours: {} // אובייקט לשמירת חריגים
+        };
+
+        // --- ניהול אזור שירות עובד ---
+        let workerArea = { lat: 32.085, lng: 34.781, radius: 20 }; // ברירת מחדל ת"א
+
+        const DAY_NAMES = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'יום שבת'];
+        const SHORT_DAYS = ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''];
+
+        const ADMIN_EMAIL = 'micaellevin4856@gmail.com';
+        let adminUsersCache = [];
+        const FORBIDDEN_WORDS = ["זונ", "שרמוט", "זיונ", "זיין", "מזדיי", "כוס", "זין", "בולבול", "שפיך", "אורגזמ", "גמירה", "לגמור", "פורנו", "סקס", "מין", "אירוטי", "אנאלי", "אוראלי", "מצוצ", "למצוץ", "בולע", "עמוק", "חודר", "דוגי", "לווי", "ליווי", "דיסקרטי", "מארחת", "אירוח", "עיסוי", "מסאז", "הרפיה", "הרפייה", "הפי אנד", "סוף טוב", "בודי", "חשפנ", "חשפות", "ערומ", "עירום", "תחת", "ציצי", "פטמות", "סווינגר", "חילופי זוגות", "בגידות", "סטוץ", "יזיז", "מפנקת", "פינוק", "דומיננט", "שפחה", "אדון", "בדסמ", "רגליים", "גרביונים", "מלכה", "עבד", "שליטה", "יצאנית", "נפקנית", "סוטה", "פרוצה", "קדשה", "שכבנית", "שרלילה", "זונא", "זונע", "ג'יגולו", "גיגולו", "סרסור", "זנזון", "זנאי", "רכיבה על עמוד", "ריקוד על עמוד", "בחורות", "בחורה", "איכותית", "בוגרת", "צעירה", "צימר", "לפי שעה", "חדרים", "דירה", "דירות", "ידני", "פה", "לשון", "לוהטת", "שובבה", "רטובה", "חרמן", "חרמנית", "בתשלום", "סמים", "קוקאין", "קוק", "גראס", "ירוק", "טלגראס", "חשיש", "הרואין", "קריסטל", "אקסטזי", "נשק", "אקדח", "רובה", "רימון", "להרוג", "רצח", "אונס", "פדופיל", "הימורים", "קזינו", "פוקר", "הלוואות", "שוק אפור", "צ'קים", "הלבנה", "גנוב", "מזויף", "זיוף", "מניאק", "הומו", "קוקסינל", "לסבית", "מתרומם", "זבל", "חרא", "קקי", "פיפי", "מטומטם", "מפגר", "דביל", "אידיוט", "אוטיסט", "נכה", "ערבי", "יהודון", "נאצי", "היטלר", "שואה", "אשכנזי", "מזרחי", "כושי", "סודני", "שרמוטה", "בן זונה", "בת זונה", "כוסאמק", "כוסעמק", "כוסאומו", "כוסעומו", "שרלילה", "פלוץ", "מסריח", "פרטיות מובטחת", "דיסקרטיות מלאה", "בחורות יפות", "בחורות איכותיות", "שרותי ליווי", "שירותי ליווי", "נערות ליווי", "דירת דיסקרטית", "אירוח פרטי", "מציצה", "לבלוע", "בליעה", "סקס טלפוני", "צ'אט סקס", "מצלמות אינטרנט", "סרטי פורנו", "אתרי פורנו", "פרפר", "שפריץ", "שפריצים", "תחתונים רטובים", "ביגוד תחתון", "משחקי מין", "צעצועי מין", "אביזרי מין", "מועדוני חשפנות", "מסיבות פרטיות", "מסיבות סקס", "לסביות", "החלפת זוגות", "סווינגרים", "מועדוני סווינגרים", "מועדוני חילופי זוגות", "השטרלטות", "השתוללות", "פנטזיות מין", "פנטזיות מיניות", "משחקי תפקידים", "תפקידים מיניים", "תפקיד מיני", "משחק תפקידים", "משחק מיני", "מצצ", "למצוץ", "דוגי", "דוגי סטייל", "סקס אנאלי", "מין אנאלי", "אנאלית", "אנאלי", "אורגזמה", "אורגזמות", "גמירות", "לגמור", "גמור", "לגמירה", "גמירה", "סקס Oral", "מין Oral", "Oral", "אוראלי", "אוראלית", "מציצה", "מציצות", "בולע", "בולעת", "עמוק", "חודר", "חודרת", "רכיבה על הפנים"];
+
+        // --- Analytics Helper ---
+        function logAnalytics(event, data) {
+            if (window.fb && window.fb.logEvent) {
+                window.fb.logEvent(event, data);
+            }
+        }
+
+        // --- Security Utilities ---
+        const RateLimiter = {
+            limits: {
+                login: { count: 5, window: 15 * 60 * 1000 }, // 5 attempts per 15 mins
+                register: { count: 5, window: 15 * 60 * 1000 }, // 5 attempts per 15 mins
+                post_job: { count: 3, window: 60 * 60 * 1000 }, // 3 posts per hour
+                report: { count: 5, window: 60 * 60 * 1000 }, // 5 reports per hour
+                contact: { count: 20, window: 60 * 60 * 1000 } // 20 contacts per hour
+            },
+
+            check: function (action) {
+                const config = this.limits[action];
+                if (!config) return true;
+
+                const key = `rl_${action}`;
+                const now = Date.now();
+                let history = JSON.parse(localStorage.getItem(key)) || [];
+
+                // Filter out old timestamps
+                history = history.filter(ts => now - ts < config.window);
+
+                if (history.length >= config.count) {
+                    const timeLeft = Math.ceil((history[0] + config.window - now) / 60000);
+                    showNotification(`פעולה נחסמה זמנית. נסה שוב בעוד ${timeLeft} דקות.`, true);
+                    return false;
+                }
+
+                return true;
+            },
+
+            record: function (action) {
+                const config = this.limits[action];
+                if (!config) return;
+
+                const key = `rl_${action}`;
+                const now = Date.now();
+                let history = JSON.parse(localStorage.getItem(key)) || [];
+
+                // Filter and add new timestamp
+                history = history.filter(ts => now - ts < config.window);
+                history.push(now);
+
+                localStorage.setItem(key, JSON.stringify(history));
+            }
+        };
+
+        function sanitizeData(data) {
+            if (typeof data === 'string') {
+                // Basic implementation of escapeHtml if not globally available, though it likely is.
+                // Using the existing global escapeHtml if possible, otherwise local logic
+                if (typeof escapeHtml === 'function') return escapeHtml(data);
+                return data.replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+            if (Array.isArray(data)) {
+                return data.map(item => sanitizeData(item));
+            }
+            if (typeof data === 'object' && data !== null) {
+                const sanitized = {};
+                for (const key in data) {
+                    if (Object.prototype.hasOwnProperty.call(data, key)) {
+                        // Don't sanitize timestamps or specialized objects if strictly needed, 
+                        // but generally safe for POJOs sending to Firebase
+                        sanitized[key] = sanitizeData(data[key]);
+                    }
+                }
+                return sanitized;
+            }
+            return data;
+        }
+
+        // --- My Job Navigation ---
+        window.showMyJob = function () {
+            if (!window.currentUser) {
+                showNotification("נא להתחבר כדי לראות את המשרה שלך");
+                showScreen('login');
+                return;
+            }
+
+            // Find the user's active job
+            const myJobs = (window.allJobs || []).filter(j => j.userId === window.currentUser.uid && isJobActive(j));
+
+            if (myJobs.length === 0) {
+                showNotification("טרם פרסמת משרה פעילה. לחץ על 'פרסם משרה'!");
+                showScreen('post');
+                return;
+            }
+
+            // If they have jobs, show them in the feed with a filter
+            showScreen('feed');
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) searchInput.value = ""; // Clear search
+
+            // We'll temporarily override renderJobs to show ONLY these jobs or just scroll to first
+            // For now, let's just open the details of the first one if only one, or filter feed.
+            if (myJobs.length === 1) {
+                openDetails(myJobs[0].id);
+            } else {
+                // More than one job, just filter feed by user ID?
+                // For simplicity, let's just show the first one.
+                openDetails(myJobs[0].id);
+            }
+        };
+
+        // --- All Country Logic ---
+        window.toggleWorkerAllCountry = function () {
+            const isAll = document.getElementById('w-all-country').checked;
+            const fields = document.getElementById('worker-location-fields');
+            if (isAll) {
+                fields.classList.add('hidden');
+                document.getElementById('w-area-lat').value = "0";
+                document.getElementById('w-area-lng').value = "0";
+            } else {
+                fields.classList.remove('hidden');
+                // Use a longer delay to ensure animation/visibility is settled
+                setTimeout(() => {
+                    if (window.initWorkerMap) window.initWorkerMap();
+                }, 400);
+            }
+        };
+
+        window.toggleJobAllCountry = function () {
+            const isAll = document.getElementById('p-all-country').checked;
+            const fields = document.getElementById('job-location-fields');
+            const status = document.getElementById('loc-status');
+            if (isAll) {
+                fields.classList.add('hidden');
+                status.classList.add('hidden');
+                document.getElementById('p-lat').value = "0";
+                document.getElementById('p-lng').value = "0";
+            } else {
+                fields.classList.remove('hidden');
+                status.classList.remove('hidden');
+                if (mapPicker) setTimeout(() => mapPicker.invalidateSize(), 150);
+            }
+        };
+
+        // --- Direct Profile Navigation ---
+        window.editOwnWorkerProfile = function () {
+            showScreen('profile');
+            // Check if form is open, if not, open it
+            setTimeout(() => {
+                const form = document.getElementById('worker-setup-form');
+                if (form && form.classList.contains('hidden')) {
+                    toggleWorkerForm();
+                } else if (form) {
+                    form.scrollIntoView({ behavior: 'smooth' });
+                    // Ensure map is correctly sized
+                    setTimeout(window.initWorkerMap, 300);
+                }
+            }, 100);
+        };
+
+        // (Redundant onpopstate removed, handled by addEventListener below)
+        history.replaceState({ screen: 'home' }, 'Home', '#home');
+
+        // --- Worker Profiles Logic ---
+        function toggleWorkerForm() {
+            document.getElementById('worker-setup-form').classList.toggle('hidden');
+            if (!document.getElementById('worker-setup-form').classList.contains('hidden')) {
+                document.getElementById('worker-setup-form').scrollIntoView({ behavior: 'smooth' });
+                updateScheduleUI();
+
+                // Set map center to user's current location if we have it and no worker area is set yet
+                if (userLocation && (!workerArea.lat || workerArea.lat === 32.085)) {
+                    workerArea.lat = userLocation.lat;
+                    workerArea.lng = userLocation.lng;
+                }
+
+                setTimeout(window.initWorkerMap, 400); // חשוב: אתחול המפה כשהטופס גלוי
+            }
+        }
+
+        function toggleCustomProfession() {
+            const val = document.getElementById('w-profession-select').value;
+            const customInput = document.getElementById('w-profession-custom');
+            if (val === 'other') {
+                customInput.classList.remove('hidden');
+                customInput.focus();
+            } else {
+                customInput.classList.add('hidden');
+            }
+        }
+
+        // --- לוגיקה חכמה לניהול זמינות ---
+
+        function toggleSmartDay(dayIdx) {
+            const idx = scheduleState.selectedDays.indexOf(dayIdx);
+            const btn = document.getElementById(`s-day-${dayIdx}`);
+
+            if (idx > -1) {
+                // הסרה
+                scheduleState.selectedDays.splice(idx, 1);
+                delete scheduleState.customHours[dayIdx]; // מחיקת חריגים
+                btn.classList.remove('selected');
+            } else {
+                // הוספה
+                scheduleState.selectedDays.push(dayIdx);
+                scheduleState.selectedDays.sort((a, b) => a - b);
+                btn.classList.add('selected');
+            }
+            updateScheduleUI();
+        }
+
+        function updateScheduleUI() {
+            const container = document.getElementById('schedule-list');
+            container.innerHTML = '';
+
+            const globalStart = document.getElementById('global-start').value;
+            const globalEnd = document.getElementById('global-end').value;
+
+            if (scheduleState.selectedDays.length === 0) {
+                container.innerHTML = '<div class="text-center text-xs text-slate-400 py-2">לא נבחרו ימי עבודה</div>';
+                generateFinalString();
+                return;
+            }
+
+            scheduleState.selectedDays.forEach(dayIdx => {
+                const isCustom = scheduleState.customHours[dayIdx] !== undefined;
+
+                // שעות לתצוגה
+                const currentStart = isCustom ? scheduleState.customHours[dayIdx].start : globalStart;
+                const currentEnd = isCustom ? scheduleState.customHours[dayIdx].end : globalEnd;
+
+                const el = document.createElement('div');
+                el.className = `schedule-item ${isCustom ? 'custom' : ''}`;
+
+                el.innerHTML = `
+                    <div class="flex justify-between items-center cursor-pointer" onclick="toggleDayEdit(${dayIdx})">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-sm text-slate-700 bg-slate-100 w-6 h-6 flex items-center justify-center rounded-full">${SHORT_DAYS[dayIdx]}</span>
+                            <span class="text-xs ${isCustom ? 'font-bold text-amber-700' : 'text-slate-500'}">
+                                ${currentStart} - ${currentEnd}
+                                ${isCustom ? '(מותאם אישית)' : ''}
+                            </span>
+                        </div>
+                        <button type="button" class="text-slate-400 hover:text-blue-600 transition">
+                            ✏️
+                        </button>
+                    </div>
+                    
+                    <div id="edit-panel-${dayIdx}" class="edit-day-panel">
+                        <input type="time" id="start-${dayIdx}" value="${currentStart}" class="bg-slate-50 border border-slate-200 rounded text-xs p-1">
+                        <span>-</span>
+                        <input type="time" id="end-${dayIdx}" value="${currentEnd}" class="bg-slate-50 border border-slate-200 rounded text-xs p-1">
+                        <button type="button" onclick="saveDayCustom(${dayIdx})" class="bg-blue-600 text-white text-[10px] px-2 py-1 rounded font-bold mr-auto">שמור</button>
+                        ${isCustom ? `<button type="button" onclick="resetDayCustom(${dayIdx})" class="text-red-500 text-[10px] underline ml-2">בטל חריג</button>` : ''}
+                    </div>
+                `;
+                container.appendChild(el);
+            });
+
+            // עדכון כפתורי הימים למעלה
+            document.querySelectorAll('.day-btn').forEach(btn => btn.classList.remove('selected'));
+            scheduleState.selectedDays.forEach(d => document.getElementById(`s-day-${d}`).classList.add('selected'));
+
+            generateFinalString();
+        }
+
+        window.toggleDayEdit = function (dayIdx) {
+            // סגור את כל האחרים
+            document.querySelectorAll('.edit-day-panel').forEach(p => {
+                if (p.id !== `edit-panel-${dayIdx}`) p.classList.remove('open');
+            });
+            // פתח את הנוכחי
+            const panel = document.getElementById(`edit-panel-${dayIdx}`);
+            panel.classList.toggle('open');
+        }
+
+        window.saveDayCustom = function (dayIdx) {
+            const s = document.getElementById(`start-${dayIdx}`).value;
+            const e = document.getElementById(`end-${dayIdx}`).value;
+
+            // שמירה בזיכרון
+            scheduleState.customHours[dayIdx] = { start: s, end: e };
+            updateScheduleUI();
+        }
+
+        window.resetDayCustom = function (dayIdx) {
+            delete scheduleState.customHours[dayIdx];
+            updateScheduleUI();
+        }
+
+        window.updateScheduleUI = updateScheduleUI;
+        window.toggleSmartDay = toggleSmartDay;
+
+        // יצירת מחרוזת חכמה לתצוגה
+        function generateFinalString() {
+            const globalStart = document.getElementById('global-start').value;
+            const globalEnd = document.getElementById('global-end').value;
+
+            // קיבוץ ימים לפי שעות
+            let groups = {}; // Key: "08:00-17:00", Value: [0, 1, 2...]
+
+            scheduleState.selectedDays.forEach(day => {
+                let timeKey;
+                if (scheduleState.customHours[day]) {
+                    timeKey = `${scheduleState.customHours[day].start}-${scheduleState.customHours[day].end}`;
+                } else {
+                    timeKey = `${globalStart}-${globalEnd}`;
+                }
+
+                if (!groups[timeKey]) groups[timeKey] = [];
+                groups[timeKey].push(day);
+            });
+
+            // בניית הטקסט
+            let parts = [];
+            for (const [time, days] of Object.entries(groups)) {
+                days.sort((a, b) => a - b);
+
+                let daysStr = "";
+                // בדיקה אם זה רצף (א-ה)
+                if (days.length > 2 && isConsecutive(days)) {
+                    daysStr = `${SHORT_DAYS[days[0]]}-${SHORT_DAYS[days[days.length - 1]]}`;
+                } else {
+                    daysStr = days.map(d => SHORT_DAYS[d]).join(',');
+                }
+
+                parts.push(`${daysStr}: ${time}`);
+            }
+
+            const finalTxt = parts.join(' | ');
+            document.getElementById('final-schedule-text').innerText = finalTxt || "לא הוגדר";
+            return finalTxt;
+        }
+
+        function isConsecutive(arr) {
+            for (let i = 0; i < arr.length - 1; i++) {
+                if (arr[i + 1] !== arr[i] + 1) return false;
+            }
+            return true;
+        }
+
+        // --- ניהול משרות וסוג תשלום ---
+        window.toggleHoursInput = function () {
+            const type = document.getElementById('p-salary-type').value;
+            const divHours = document.getElementById('div-hours');
+            const lblRate = document.getElementById('lbl-rate');
+
+            if (type === 'fixed') {
+                divHours.classList.add('hidden');
+                lblRate.innerText = 'מחיר גלובלי';
+            } else {
+                divHours.classList.remove('hidden');
+                lblRate.innerText = 'תעריף לשעה';
+            }
+        }
+
+        // --- Filter System Logic ---
+        let activeFilters = {
+            jobs: {
+                distance: 100, // 100 = no distance limit by default (user-driven)
+                priceMin: null,
+                priceMax: null,
+                date: 'all',
+                sort: 'newest',
+                paymentType: 'all'
+            },
+            workers: {
+                distance: 100, // 100 = no distance limit by default (user-driven)
+                rating: 0,
+                sort: 'newest'
+            }
+        };
+
+        window.toggleFilterPanel = function (type) {
+            const panelId = type === 'jobs' ? 'filter-panel' : 'worker-filter-panel';
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+
+            panel.classList.toggle('open');
+            if (panel.classList.contains('open')) {
+                if (window.checkLocationRequirement) window.checkLocationRequirement(type);
+            }
+        }
+
+        window.checkLocationRequirement = function (type) {
+            const sortEl = type === 'jobs' ? document.getElementById('jobs-sort') : document.getElementById('worker-sort');
+            const distContainer = type === 'jobs' ? document.getElementById('dist-filter-container-jobs') : document.getElementById('dist-filter-container-workers');
+            const distOverlay = type === 'jobs' ? document.getElementById('dist-overlay-jobs') : document.getElementById('dist-overlay-workers');
+            const msgEl = type === 'jobs' ? document.getElementById('sort-loc-msg-jobs') : document.getElementById('sort-loc-msg-workers');
+
+            if (!window.currentUser) {
+                if (distContainer) distContainer.classList.add('opacity-50', 'pointer-events-none');
+                if (distOverlay) {
+                    distOverlay.classList.remove('hidden');
+                    const txt = distOverlay.querySelector('div');
+                    if (txt) txt.innerText = '🔒 התחבר כדי לסנן';
+                }
+                return;
+            }
+
+            if (!userLocation) {
+                if (distContainer) distContainer.classList.add('opacity-50', 'pointer-events-none');
+                if (distOverlay) {
+                    distOverlay.classList.remove('hidden');
+                    const txt = distOverlay.querySelector('div');
+                    if (txt) txt.innerText = '🚫 הגדר מיקום תחילה';
+                }
+
+                if (sortEl && sortEl.value === 'closest') {
+                    if (msgEl) msgEl.classList.remove('hidden');
+                } else {
+                    if (msgEl) msgEl.classList.add('hidden');
+                }
+            } else {
+                if (distContainer) distContainer.classList.remove('opacity-50', 'pointer-events-none');
+                if (distOverlay) distOverlay.classList.add('hidden');
+                if (msgEl) msgEl.classList.add('hidden');
+            }
+        }
+
+        window.updateRangeValue = function (type, val) {
+            const elId = type === 'jobs' ? 'dist-val-jobs' : 'dist-val-workers';
+            const el = document.getElementById(elId);
+            if (el) el.innerText = parseInt(val) >= 100 ? 'ללא הגבלה' : val + ' ק"מ';
+        }
+
+        window.updatePriceDisplay = function () {
+            const min = document.getElementById('price-min').value || 50;
+            const max = document.getElementById('price-max').value || 500;
+            const el = document.getElementById('price-val');
+            if (el) el.innerText = `${min}-${max}`;
+        }
+
+        window.setRatingFilter = function (rating) {
+            activeFilters.workers.rating = rating;
+            // Visually update buttons
+            const container = document.getElementById('worker-filter-panel');
+            if (!container) return;
+            const buttons = container.querySelectorAll('.rating-btn');
+            buttons.forEach(btn => {
+                const btnRating = parseFloat(btn.getAttribute('data-rating'));
+                if (btnRating === rating) {
+                    btn.classList.add('bg-yellow-400', 'text-white', 'border-yellow-400', 'shadow-md');
+                    btn.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
+                } else {
+                    btn.classList.remove('bg-yellow-400', 'text-white', 'border-yellow-400', 'shadow-md');
+                    btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+                }
+            });
+        }
+
+        window.applyFilters = function () {
+            const dVal = document.getElementById('filter-dist-jobs').value;
+            const pMin = document.getElementById('price-min').value;
+            const pMax = document.getElementById('price-max').value;
+            const date = document.getElementById('filter-date').value;
+            const sort = document.getElementById('jobs-sort').value;
+            const paymentType = document.getElementById('filter-payment-type').value; 
+            const perPage = document.getElementById('jobs-per-page').value; // Added
+
+            let finalSort = sort;
+            if (sort === 'closest' && !userLocation) {
+                showNotification('לא ניתן לסנן לפי מרחק ללא מיקום', true);
+                finalSort = 'newest';
+                document.getElementById('jobs-sort').value = 'newest';
+            }
+
+            jobItemsPerPage = parseInt(perPage) || 20;
+
+            activeFilters.jobs = {
+                distance: parseInt(dVal),
+                priceMin: pMin ? parseInt(pMin) : null,
+                priceMax: pMax ? parseInt(pMax) : null,
+                date: date,
+                sort: finalSort,
+                paymentType: paymentType
+            };
+
+            const dot = document.getElementById('filter-dot-jobs');
+            if (dot) dot.style.display = 'block';
+
+            toggleFilterPanel('jobs');
+            renderJobs();
+        }
+
+        window.resetFilters = function () {
+            jobItemsPerPage = 20;
+            activeFilters.jobs = {
+                distance: 100,
+                priceMin: null,
+                priceMax: null,
+                date: 'all',
+                sort: 'newest',
+                paymentType: 'all'
+            };
+
+            document.getElementById('filter-dist-jobs').value = 100;
+            document.getElementById('dist-val-jobs').innerText = 'ללא הגבלה';
+            document.getElementById('price-min').value = '';
+            document.getElementById('price-max').value = '';
+            document.getElementById('filter-date').value = 'all';
+            document.getElementById('filter-payment-type').value = 'all';
+            document.getElementById('jobs-sort').value = 'newest';
+            document.getElementById('jobs-per-page').value = '20';
+
+            const dot = document.getElementById('filter-dot-jobs');
+            if (dot) dot.style.display = 'none';
+
+            toggleFilterPanel('jobs');
+            renderJobs();
+        }
+
+        window.applyWorkerFilters = function () {
+            const dVal = document.getElementById('filter-dist-workers').value;
+            const sort = document.getElementById('worker-sort').value;
+            const perPage = document.getElementById('workers-per-page').value;
+
+            let finalSort = sort;
+            if (sort === 'closest' && !userLocation) {
+                showNotification('לא ניתן לסנן לפי מרחק ללא מיקום', true);
+                finalSort = 'newest';
+                document.getElementById('worker-sort').value = 'newest';
+            }
+
+            workerItemsPerPage = parseInt(perPage) || 20;
+            activeFilters.workers.distance = parseInt(dVal);
+            activeFilters.workers.sort = finalSort;
+
+            const dot = document.getElementById('filter-dot-workers');
+            if (dot) dot.style.display = 'block';
+
+            toggleFilterPanel('workers');
+            renderWorkers();
+        }
+
+        window.resetWorkerFilters = function () {
+            workerItemsPerPage = 20;
+            activeFilters.workers = {
+                distance: 100,
+                rating: 0,
+                sort: 'newest'
+            };
+
+            document.getElementById('filter-dist-workers').value = 100;
+            document.getElementById('dist-val-workers').innerText = 'ללא הגבלה';
+            document.getElementById('worker-sort').value = 'newest';
+            document.getElementById('workers-per-page').value = '20';
+
+            setRatingFilter(0);
+
+            const dot = document.getElementById('filter-dot-workers');
+            if (dot) dot.style.display = 'none';
+
+            toggleFilterPanel('workers');
+            renderWorkers();
+        }
+
+        // --- מפת אזור עובד ---
+        window.initWorkerMap = function () {
+            const container = document.getElementById('worker-area-map');
+            if (!container) return;
+
+            // Handle cases where Nationwide is ON
+            if (document.getElementById('w-all-country').checked) return;
+
+            if (workerMap) {
+                const center = [workerArea.lat, workerArea.lng];
+                workerMap.setView(center, 9);
+                setTimeout(() => {
+                    workerMap.invalidateSize();
+                    drawWorkerMapElements();
+                }, 200);
+                return;
+            }
+
+            // Check if Leaflet is available
+            if (typeof L === 'undefined') {
+                console.error('Leaflet not loaded');
+                return;
+            }
+
+            workerMap = L.map('worker-area-map').setView([workerArea.lat, workerArea.lng], 9);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(workerMap);
+
+            workerMap.on('click', e => {
+                setWorkerLocation(e.latlng.lat, e.latlng.lng);
+            });
+
+            drawWorkerMapElements();
+
+            // Invalidate size once more after a short delay to be super sure
+            setTimeout(() => workerMap.invalidateSize(), 500);
+        }
+
+        window.drawWorkerMapElements = function () {
+            if (!workerMap) return;
+
+            if (workerMarker) workerMap.removeLayer(workerMarker);
+            if (workerCircle) workerMap.removeLayer(workerCircle);
+
+            const center = [workerArea.lat, workerArea.lng];
+            const radiusMeters = workerArea.radius * 1000;
+
+            workerMarker = L.marker(center).addTo(workerMap);
+            workerCircle = L.circle(center, {
+                color: '#3b82f6',
+                fillColor: '#3b82f6',
+                fillOpacity: 0.2,
+                radius: radiusMeters
+            }).addTo(workerMap);
+        }
+
+        window.updateWorkerCircle = function () {
+            const r = document.getElementById('w-radius').value;
+            document.getElementById('radius-val').innerText = r;
+            workerArea.radius = parseInt(r);
+            drawWorkerMapElements();
+        }
+
+        window.setWorkerLocation = function (lat, lng) {
+            workerArea.lat = parseFloat(lat);
+            workerArea.lng = parseFloat(lng);
+            document.getElementById('w-area-lat').value = lat;
+            document.getElementById('w-area-lng').value = lng;
+            drawWorkerMapElements();
+        }
+
+        window.geocodeWorkerArea = function () {
+            const q = document.getElementById('w-area-address').value;
+            if (!q) return;
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&accept-language=he`)
+                .then(r => r.json())
+                .then(d => {
+                    if (d[0]) {
+                        setWorkerLocation(d[0].lat, d[0].lon);
+                        workerMap.setView([d[0].lat, d[0].lon], 10);
+                    }
+                });
+        }
+
+        function handlePayment(method, type) {
+            let txId = '';
+
+            if (method === 'crypto') {
+                txId = prompt("אנא העבר תשלום לכתובת הארנק:\nbc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n\nלאחר מכן, הדבק כאן את ה-Transaction ID (אסמכתא) לאימות:", "");
+            } else if (method === 'paypal') {
+                const email = 'michaellevin4856@gmail.com';
+                const amount = '20';
+                const currency = 'ILS';
+
+                const paypalUrl = `https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=${email}&currency_code=${currency}&amount=${amount}&item_name=JobSnapping Premium Feature`;
+
+                window.open(paypalUrl, '_blank');
+                txId = prompt(`נפתח חלון לתשלום של ${amount} ₪.\nלאחר התשלום ב-PayPal, אנא הזן את מספר האישור שקיבלת:`, "");
+            }
+
+            if (!txId || txId.trim().length < 5) {
+                alert("לא הוזן מספר אסמכתא תקין או שהפעולה בוטלה, אנא לחץ שוב על כפתור התשלום כדי לנסות שוב.");
+                return;
+            }
+
+            // Simulate Verification
+            showNotification("מאמת תשלום בבלוקצ'יין/פייפאל...", false);
+
+            setTimeout(() => {
+                const now = new Date();
+                const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 Days
+
+                if (type === 'worker') {
+                    document.getElementById('w-premium-until').value = nextWeek.toISOString();
+                    document.getElementById('worker-premium-msg').classList.remove('hidden');
+                } else if (type === 'job') {
+                    document.getElementById('p-is-premium').value = 'true';
+                    document.getElementById('job-premium-msg').classList.remove('hidden');
+                }
+
+                showNotification('התשלום אומת בהצלחה (20 ₪)! הקידום הופעל לשבוע.');
+            }, 3000);
+        }
+
+        function checkWorkerStatus() {
+            // בדיקה ראשונית אם המשתמש מחובר ואם המידע נטען
+            if (!window.currentUser || !window.allWorkers) return;
+
+            // חיפוש הפרופיל של המשתמש הנוכחי ברשימת העובדים
+            const myWorkerProfile = window.allWorkers.find(w => w.uid === window.currentUser.uid);
+
+            // מביא את האלמנט של הבאנר וכפתור הניהול במסך העובדים
+            const promoBanner = document.getElementById('worker-promo-banner');
+            const manageBtn = document.getElementById('btn-manage-worker-profile');
+
+            if (myWorkerProfile) {
+                // === משתמש קיים כעובד ===
+
+                // 1. הסתרת הבאנר במסך העובדים והצגת כפתור ניהול
+                if (promoBanner) promoBanner.classList.add('hidden');
+                if (manageBtn) manageBtn.classList.remove('hidden');
+
+                // 2. עדכון מסך הפרופיל
+                document.getElementById('worker-join-ui').classList.add('hidden');
+                document.getElementById('worker-manage-ui').classList.remove('hidden');
+
+                // 3. מילוי הטופס בפרטים הקיימים (כדי שאם תעשה עריכה זה יהיה מלא)
+                const isCustom = !['general', 'cleaner', 'mover', 'handyman', 'waiter', 'gardener', 'babysitter', 'tutor', 'barber'].includes(myWorkerProfile.profession);
+                document.getElementById('w-profession-select').value = isCustom ? 'other' : myWorkerProfile.profession;
+
+                if (isCustom) {
+                    document.getElementById('w-profession-custom').classList.remove('hidden');
+                    document.getElementById('w-profession-custom').value = myWorkerProfile.professionText;
+                }
+
+                document.getElementById('w-skills').value = myWorkerProfile.skills || '';
+                document.getElementById('w-rate').value = myWorkerProfile.rate || '';
+                document.getElementById('w-phone').value = myWorkerProfile.phone || '';
+                document.getElementById('w-title').value = myWorkerProfile.workerTitle || '';
+                document.getElementById('w-salary-type').value = myWorkerProfile.salaryType || 'hourly';
+
+                // שחזור שעות עבודה
+                if (myWorkerProfile.scheduleData) {
+                    scheduleState = myWorkerProfile.scheduleData;
+                    if (myWorkerProfile.scheduleGlobal) {
+                        document.getElementById('global-start').value = myWorkerProfile.scheduleGlobal.start;
+                        document.getElementById('global-end').value = myWorkerProfile.scheduleGlobal.end;
+                    }
+                } else {
+                    scheduleState = { selectedDays: [0, 1, 2, 3, 4], customHours: {} };
+                }
+                updateScheduleUI();
+
+                // שחזור הגדרות מיקום עובד
+                if (myWorkerProfile.workAreaLat && myWorkerProfile.workAreaLng) {
+                    workerArea.lat = parseFloat(myWorkerProfile.workAreaLat);
+                    workerArea.lng = parseFloat(myWorkerProfile.workAreaLng);
+                    workerArea.radius = parseInt(myWorkerProfile.workAreaRadius || 20);
+
+                    document.getElementById('w-radius').value = workerArea.radius;
+                    document.getElementById('radius-val').innerText = workerArea.radius;
+                }
+
+                if (myWorkerProfile.workAddress) {
+                    document.getElementById('w-area-address').value = myWorkerProfile.workAddress;
+                }
+
+                document.getElementById('w-all-country').checked = !!myWorkerProfile.isAllCountry;
+                toggleWorkerAllCountry();
+
+            } else {
+                // === משתמש לא קיים כעובד ===
+
+                // 1. הצגת הבאנר במסך העובדים והסתרת כפתור הניהול
+                if (promoBanner) promoBanner.classList.remove('hidden');
+                if (manageBtn) manageBtn.classList.add('hidden');
+
+                // 2. איפוס מסך הפרופיל למצב "הצטרף"
+                document.getElementById('worker-join-ui').classList.remove('hidden');
+                document.getElementById('worker-manage-ui').classList.add('hidden');
+                document.getElementById('worker-setup-form').classList.add('hidden');
+            }
+        }
+        async function saveWorkerProfile() {
+            if (!window.currentUser) return showNotification('יש להתחבר כדי ליצור פרופיל', true);
+
+            const professionSelect = document.getElementById('w-profession-select');
+            let profession = professionSelect.value;
+            let professionText = professionSelect.options[professionSelect.selectedIndex].text;
+
+            if (profession === 'other') {
+                const customText = document.getElementById('w-profession-custom').value;
+                if (!customText) return showNotification('נא לכתוב את המקצוע שלך', true);
+                if (containsForbiddenContent(customText)) return showNotification('שם המקצוע מכיל מילים אסורות', true);
+                professionText = customText;
+            }
+
+            const skills = document.getElementById('w-skills').value;
+            const rate = document.getElementById('w-rate').value;
+            const phone = document.getElementById('w-phone').value;
+            const title = document.getElementById('w-title').value;
+            const salaryType = document.getElementById('w-salary-type').value;
+            const premiumUntilVal = document.getElementById('w-premium-until').value;
+
+            if (containsForbiddenContent(skills) || containsForbiddenContent(title)) {
+                return showNotification('תוכן לא הולם בכותרת או בתיאור', true);
+            }
+            if (!title) return showNotification('חובה להוסיף כותרת/סלוגן לעובד', true);
+
+            if (scheduleState.selectedDays.length === 0) return showNotification('נא לבחור לפחות יום עבודה אחד', true);
+            const availStr = generateFinalString();
+
+            if (!rate) return showNotification('נא למלא מחיר', true);
+
+            let existingPremium = null;
+            if (window.allWorkers) {
+                const existing = window.allWorkers.find(w => w.uid === window.currentUser.uid);
+                if (existing && existing.premiumUntil !== undefined) existingPremium = existing.premiumUntil;
+            }
+
+            // Save the address text from the input
+            const workAddress = document.getElementById('w-area-address').value;
+
+            // אזור עבודה
+            const isAllCountry = document.getElementById('w-all-country').checked;
+
+            const workerData = {
+                uid: window.currentUser.uid,
+                name: window.currentUser.displayName || window.currentUser.email.split('@')[0],
+                photo: window.currentUser.photoURL || 'https://ui-avatars.com/api/?background=random&name=' + (window.currentUser.displayName || 'U'),
+                profession: profession,
+                professionText: professionText,
+                skills: skills,
+                rate: rate,
+                workerTitle: title,
+                salaryType: salaryType,
+                isAllCountry: isAllCountry,
+
+                // שעות
+                availability: availStr,
+                scheduleData: scheduleState,
+                scheduleGlobal: {
+                    start: document.getElementById('global-start').value,
+                    end: document.getElementById('global-end').value
+                },
+
+                // אזור עבודה
+                workAreaLat: isAllCountry ? 0 : workerArea.lat,
+                workAreaLng: isAllCountry ? 0 : workerArea.lng,
+                workAreaRadius: isAllCountry ? 0 : workerArea.radius,
+                workAddress: isAllCountry ? 'בכל הארץ 🌍' : workAddress, // Saving address text
+
+                phone: phone,
+                userEmail: window.currentUser.email || '',
+                premiumUntil: premiumUntilVal || existingPremium || null,
+                updatedAt: new Date().toISOString()
+            };
+
+            await window.fb.set(window.fb.ref(window.fb.db, 'workers/' + window.currentUser.uid), workerData);
+            logAnalytics('worker_profile_updated');
+            showNotification('פרופיל העובד נשמר בהצלחה!');
+            document.getElementById('worker-setup-form').classList.add('hidden');
+            checkWorkerStatus();
+        }
+
+        async function deleteWorkerProfile() {
+            if (!confirm('האם אתה בטוח שברצונך למחוק את פרופיל העובד שלך?')) return;
+            await window.fb.remove(window.fb.ref(window.fb.db, 'workers/' + window.currentUser.uid));
+            showNotification('הפרופיל נמחק');
+            checkWorkerStatus();
+        }
+
+        window.toggleWorkerRangeFilter = function () {
+            if (!window.currentUser) {
+                showNotification("עליך להתחבר כדי להשתמש בסינון 'באזורך'", true);
+                checkAuthAndNavigate('profile');
+                return;
+            }
+            if (!userLocation) {
+                showNotification("חובה להגדיר מיקום בפרופיל כדי להשתמש בסינון זה", true);
+                checkAuthAndNavigate('profile');
+                return;
+            }
+            filterInRange = !filterInRange;
+
+            // עדכון עיצוב הכפתור
+            const btn = document.getElementById('btn-filter-range');
+            if (filterInRange) {
+                btn.classList.add('active'); // מחלקה קיימת ב-CSS שלך
+                btn.innerHTML = '📍 באזורך';
+            } else {
+                btn.classList.remove('active');
+                btn.innerHTML = '📍 באזורך';
+            }
+            renderWorkers();
+        }
+
+        window.changeWorkerPage = function (newPage) {
+            currentWorkerPage = newPage;
+            renderWorkers();
+            document.getElementById('screen-workers').scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        window.renderWorkers = function () {
+            const container = document.getElementById('workers-container');
+            const searchInput = document.getElementById('worker-search-input');
+            const query = searchInput ? searchInput.value.toLowerCase() : '';
+
+            if (!container) return;
+            let workers = window.allWorkers || [];
+
+            // Filter by Text
+            if (query) {
+                workers = workers.filter(w => {
+                    const text = (w.name + ' ' + w.professionText + ' ' + (w.skills || '') + ' ' + (w.workerTitle || '') + ' ' + (w.workAddress || '')).toLowerCase();
+                    return text.includes(query);
+                });
+            }
+
+            // Filter by Rating
+            if (activeFilters.workers.rating > 0) {
+                workers = workers.filter(w => (w.rating || 0) >= activeFilters.workers.rating);
+            }
+
+            // Calc Distances & Coverage Logic
+            if (userLocation) {
+                workers = workers.map(w => {
+                    let d = 9999;
+                    let coversUser = false; // האם המשתמש בתוך הרדיוס של העובד?
+
+                    if (w.isAllCountry) {
+                        d = 0; // "All Country" workers are always close
+                        coversUser = true;
+                    } else if (w.workAreaLat && w.workAreaLng) {
+                        // מרחק בין המשתמש לבין מרכז הפעילות של העובד
+                        d = parseFloat(getDistanceFromLatLonInKm(userLocation.lat, userLocation.lng, w.workAreaLat, w.workAreaLng));
+
+                        // בדיקה האם המרחק קטן או שווה לרדיוס שהעובד הגדיר
+                        const radius = w.workAreaRadius || 20;
+                        if (d <= radius) {
+                            coversUser = true;
+                        }
+                    }
+                    return { ...w, distance: d, coversUser: coversUser };
+                });
+
+                // Filter by Max Distance (Search Radius)
+                if (activeFilters.workers.distance < 100) {
+                    workers = workers.filter(w => w.distance <= activeFilters.workers.distance);
+                }
+            }
+
+            // Filter by Range (אם הכפתור לחוץ)
+            if (filterInRange && userLocation) {
+                workers = workers.filter(w => w.coversUser);
+            }
+
+            // Premium & Sort
+            workers.sort((a, b) => {
+                if (a.isPremium && !b.isPremium) return -1;
+                if (!a.isPremium && b.isPremium) return 1;
+
+                const sortType = activeFilters.workers.sort;
+
+                if (sortType === 'rating_desc') {
+                    return (b.rating || 0) - (a.rating || 0);
+                }
+                if (sortType === 'price_asc') {
+                    return (parseInt(a.rate) || 0) - (parseInt(b.rate) || 0);
+                }
+                if (sortType === 'price_desc') {
+                    return (parseInt(b.rate) || 0) - (parseInt(a.rate) || 0);
+                }
+
+                if (sortType === 'newest') {
+                    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+                }
+
+                if (sortType === 'closest' && userLocation) {
+                    // 1. קודם מי שבאזורי
+                    if (a.coversUser && !b.coversUser) return -1;
+                    if (!a.coversUser && b.coversUser) return 1;
+                    // 2. אח"כ לפי מרחק פיזי
+                    return (a.distance || 99999) - (b.distance || 99999);
+                }
+
+                return 0;
+            });
+
+
+            // Hide promo if I am worker
+            const promoBanner = document.getElementById('worker-promo-banner');
+            if (window.currentUser && workers.some(w => w.uid === window.currentUser.uid)) {
+                if (promoBanner) promoBanner.classList.add('hidden');
+            } else {
+                if (promoBanner) promoBanner.classList.remove('hidden');
+            }
+
+            const totalItems = workers.length;
+            const totalPages = Math.ceil(totalItems / workerItemsPerPage);
+
+            if (currentWorkerPage > totalPages) currentWorkerPage = 1;
+
+            const startIdx = (currentWorkerPage - 1) * workerItemsPerPage;
+            const endIdx = startIdx + workerItemsPerPage;
+            const displayedWorkers = workers.slice(startIdx, endIdx);
+
+            renderPaginationControls('workers-pagination', currentWorkerPage, totalPages, 'changeWorkerPage');
+
+            if (workers.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-400 font-medium flex flex-col items-center">
+                        <span class="text-4xl mb-2">🕵️</span>
+                        <div class="mb-1">לא נמצאו בעלי מקצוע ${filterInRange ? 'באזורך' : ''}.</div>
+                        <div class="text-[10px] font-mono opacity-50">D: ${(window.allWorkers || []).length} / Filtered: 0</div>
+                        <button onclick="resetFilters()" class="mt-4 text-blue-600 font-bold hover:underline text-sm">נקה סינון</button>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = displayedWorkers.map(w => {
+                let priceText = `₪${w.rate}/שעה`;
+                if (w.salaryType === 'project') priceText = `₪${w.rate}/לטיפול`;
+                if (w.salaryType === 'global') priceText = `₪${w.rate} גלובלי`;
+
+                // תגיות מרחק וכיסוי
+                let distText = '';
+                let coverageBadge = '';
+
+                if (w.isAllCountry) {
+                    coverageBadge = `<span class="bg-blue-100 text-blue-700 text-[10px] px-2 py-1 rounded font-bold border border-blue-200 flex items-center gap-1">🌍 בכל הארץ</span>`;
+                    distText = `<div class="text-blue-500 text-[10px] font-bold">זמין לכל המדינה</div>`;
+                } else if (userLocation && w.distance !== undefined && w.distance < 9000) {
+                    // תגית מרחק פיזי
+                    let distVal = w.distance < 1 ? Math.round(w.distance * 1000) + ' מטרים' : w.distance.toFixed(1) + ' ק"מ';
+                    distText = `<div class="text-slate-400 text-[10px]">מרחק ממך: ${distVal}</div>`;
+
+                    // תגית כיסוי (האם מגיע אליי)
+                    if (w.coversUser) {
+                        coverageBadge = `<span class="bg-green-100 text-green-700 text-[10px] px-2 py-1 rounded font-bold border border-green-200 flex items-center gap-1"><i data-lucide="check-circle" class="w-3 h-3"></i> באזורך</span>`;
+                    } else {
+                        coverageBadge = `<span class="bg-red-50 text-red-600 text-[10px] px-2 py-1 rounded font-bold border border-red-100 flex items-center gap-1"><i data-lucide="x-circle" class="w-3 h-3"></i> לא באזורך</span>`;
+                    }
+                }
+
+                // האם פרימיום?
+                const isPrem = w.premiumUntil && new Date(w.premiumUntil) > new Date();
+
+                // כתובת עובד
+                let addressHtml = '';
+                if (w.workAddress) {
+                    addressHtml = `<div class="text-xs text-slate-500 mb-1 flex items-center gap-1"><i data-lucide="map-pin" class="w-3 h-3"></i> ${escapeHtml(w.workAddress)}</div>`;
+                }
+
+                const jsSafeUid = w.uid.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                return `
+                <div class="card-base p-4 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition mb-3 ${isPrem ? 'premium-glow' : ''} worker-card group" onclick="toggleWorkerCard('${jsSafeUid}')">
+                    ${isPrem ? '<div class="premium-badge">👑 מומלץ</div>' : ''}
+                    
+                    <div class="flex items-center gap-4 ${isPrem ? 'pt-2' : ''}">
+                        <img src="${sanitizeImageUrl(w.photo) || 'https://ui-avatars.com/api/?background=random&name=' + encodeURIComponent(w.name || 'User')}" class="w-14 h-14 rounded-full bg-slate-100 border border-slate-200 object-cover flex-shrink-0" alt="">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex justify-between items-start">
+                                <h3 class="font-bold text-slate-800 truncate">${escapeHtml(w.workerTitle || w.professionText)}</h3>
+                                <div class="bg-green-50 text-green-700 text-[10px] font-bold px-2 py-1 rounded border border-green-100 whitespace-nowrap">${priceText}</div>
+                            </div>
+                            <div class="text-xs text-slate-500 font-medium mb-1">${escapeHtml(w.name)} • ${escapeHtml(w.professionText)}</div>
+                            ${addressHtml}
+                            
+                            <div class="flex items-center gap-2 mb-2">
+                                ${coverageBadge}
+                                ${distText}
+                            </div>
+
+                            <div class="flex flex-col mt-3">
+                                <div class="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 self-start mb-2">טווח שירות: ${w.workAreaRadius || 20} ק"מ</div>
+                                <button id="btn-details-${w.uid}" class="w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-black transition text-sm flex items-center justify-center gap-2">
+                                    <span>▼ עוד פרטים</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="w-body-${w.uid}" class="worker-expandable-content mt-0 border-t border-slate-50">
+                        <div class="pt-4 space-y-3">
+                            <div class="text-sm text-slate-600 bg-slate-50 p-3 rounded-xl">
+                                ${escapeHtml(w.skills || 'אין פירוט נוסף')}
+                            </div>
+                            
+                            <div class="flex flex-wrap items-center gap-2 mb-3">
+                                <div class="flex items-center gap-2 text-xs font-mono text-slate-500 bg-slate-50 p-2 rounded-lg inline-block">
+                                    🕒 זמינות: ${escapeHtml(w.availability)}
+                                </div>
+                                <div id="w-rating-${w.uid}" class="rating-badge text-xs">
+                                    0 דירוגים
+                                </div>
+                            </div>
+
+                            ${window.currentUser && w.uid === window.currentUser.uid ? `
+                                <div class="bg-blue-50 p-4 rounded-xl border border-blue-200 mt-3 mb-3 text-center">
+                                    <div class="text-sm text-blue-800 font-bold">👤 זה הפרופיל שלך</div>
+                                    <div class="text-xs text-blue-600 mt-1 mb-3">משתמשים אחרים יכולים לדרג אותך</div>
+                                    <button onclick="event.stopPropagation(); window.editOwnWorkerProfile()" 
+                                        class="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition active:scale-95">
+                                        ✏️ עריכת הפרופיל שלי
+                                    </button>
+                                </div>
+                            ` : `
+                                <div class="rating-container mt-3 mb-3 p-4">
+                                    <div class="relative z-10">
+                                        <div class="text-xs text-amber-900 font-bold mb-2 text-center">דרג את בעל המקצוע</div>
+                                        <div id="w-stars-${w.uid}" class="flex gap-2 justify-center text-3xl">
+                                            ${[1, 2, 3, 4, 5].map(s => `<span class="rating-star text-slate-300" data-score="${s}" onclick="event.stopPropagation(); rateUser(${s}, '${jsSafeUid}', 'worker')"><i data-lucide="star" class="w-8 h-8"></i></span>`).join('')}
+                                        </div>
+                                        <div class="rating-instruction mt-2"><i data-lucide="mouse-pointer-2" class="w-3 h-3 inline"></i> לחץ לדירוג</div>
+                                    </div>
+                                </div>
+                            `}
+
+                            ${w.isAllCountry ? `
+                                <div class="bg-blue-50/50 p-6 rounded-2xl border border-blue-100 mt-2 flex flex-col items-center justify-center text-center">
+                                    <div class="text-3xl mb-2">🌍</div>
+                                    <div class="text-sm font-black text-blue-800">נותן שירות בכל הארץ</div>
+                                    <div class="text-[10px] text-blue-600 font-bold opacity-80 mt-1">עובד זה זמין לביצוע משימות ללא הגבלת מיקום</div>
+                                </div>
+                            ` : `
+                                <div class="h-40 w-full bg-slate-100 rounded-xl relative overflow-hidden border border-slate-200 mt-2">
+                                    <div id="map-worker-${w.uid}" class="mini-map"></div>
+                                </div>
+                            `}
+
+                             ${window.currentUser && w.uid !== window.currentUser.uid ? `
+                                <button onclick="event.stopPropagation(); openReportModal('worker', '${jsSafeUid}')" 
+                                    class="w-full bg-red-50 text-red-600 py-3 rounded-xl text-xs font-bold border border-red-200 hover:bg-red-100 transition flex items-center justify-center gap-2 mb-2">
+                                    <span>🚨</span>
+                                    <span>דווח על תוכן בעייתי</span>
+                                </button>
+                            ` : ''}
+
+                            <button onclick="event.stopPropagation(); window.open('https://wa.me/972${(w.phone || '').replace(/^0/, '').replace(/\D/g, '')}', '_blank'); logAnalytics('hire_me_click', {workerId: '${jsSafeUid}'})" class="w-full bg-slate-900 text-white py-3 rounded-xl text-sm font-bold shadow hover:bg-black transition active:scale-95 flex items-center justify-center gap-2">
+                                <span>💬 שלח הודעה</span>
+                            </button>
+
+                            ${window.currentUser && window.currentUser.email === ADMIN_EMAIL ? `
+                                <div class="mt-3 border-t border-amber-100 pt-3">
+                                    <div class="text-[10px] text-amber-700 font-bold mb-2 text-center bg-amber-50 py-1 rounded">⚡ ניהול מנהל</div>
+                                    <div class="flex gap-2">
+                                        <button onclick="event.stopPropagation(); adminEditWorker('${jsSafeUid}')" class="flex-1 bg-blue-50 text-blue-700 px-3 py-2 rounded-xl text-xs font-bold border border-blue-200 hover:bg-blue-100 transition" aria-label="ערוך פרופיל עובד">✏️ ערוך פרופיל</button>
+                                        <button onclick="event.stopPropagation(); adminDeleteWorker('${jsSafeUid}')" class="flex-1 bg-red-50 text-red-600 px-3 py-2 rounded-xl text-xs font-bold border border-red-200 hover:bg-red-100 transition" aria-label="מחק פרופיל עובד">🗑️ מחק פרופיל</button>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+
+            displayedWorkers.forEach(w => {
+                // Don't load ratings for own profile
+                if (window.loadRatings && (!window.currentUser || w.uid !== window.currentUser.uid)) {
+                    window.loadRatings(w.uid, 'worker');
+                }
+            });
+        }
+
+        window.toggleWorkerCard = function (uid) {
+            const card = document.getElementById(`w-body-${uid}`).parentElement;
+            const isCurrentlyExpanded = card.classList.contains('expanded');
+
+            // 1. Close ALL expanded cards & Reset texts
+            document.querySelectorAll('.worker-card.expanded').forEach(el => {
+                el.classList.remove('expanded');
+                const btn = el.querySelector('button[id^="btn-details-"]');
+                if (btn) btn.innerHTML = '<span>▼ עוד פרטים</span>';
+            });
+
+            // 2. If it wasn't expanded before, Open it now
+            if (!isCurrentlyExpanded) {
+                card.classList.add('expanded');
+                const btn = document.getElementById(`btn-details-${uid}`);
+                if (btn) btn.innerHTML = '<span>▲ פחות פרטים</span>';
+
+                // Initialize map if opening
+                setTimeout(() => {
+                    initMiniWorkerMap(uid);
+                }, 100);
+            }
+        }
+
+        window.initMiniWorkerMap = function (uid) {
+            const worker = window.allWorkers.find(w => w.uid === uid);
+            if (!worker || worker.isAllCountry || !worker.workAreaLat) return;
+
+            const mapId = `map-worker-${uid}`;
+            const container = document.getElementById(mapId);
+
+            // Check if map already initialized
+            if (container._leaflet_id) return;
+
+            // השינוי כאן: הפעלת שליטה, זום וגרירה
+            const map = L.map(mapId, {
+                zoomControl: true,       // מציג כפתורי + ו -
+                attributionControl: false,
+                dragging: true,          // מאפשר לגרור את המפה
+                scrollWheelZoom: true,   // מאפשר זום עם הגלגלת
+                touchZoom: true          // מאפשר זום עם האצבעות במובייל
+            }).setView([worker.workAreaLat, worker.workAreaLng], 14); // מתחיל בזום קרוב יותר (14)
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+
+            L.marker([worker.workAreaLat, worker.workAreaLng]).addTo(map);
+
+            const radius = (worker.workAreaRadius || 20) * 1000;
+            const circle = L.circle([worker.workAreaLat, worker.workAreaLng], {
+                color: '#3b82f6',
+                fillColor: '#3b82f6',
+                fillOpacity: 0.2,
+                radius: radius
+            }).addTo(map);
+
+            // התאמת זום למעגל שהוגדר בדיוק
+            const group = new L.featureGroup([circle]);
+
+            // Timeout קצר כדי לוודא שהמפה נטענה לפני שעושים זום לאזור
+            setTimeout(() => {
+                map.invalidateSize();
+                map.fitBounds(group.getBounds(), { padding: [10, 10] }); // מתמקד בדיוק על המעגל
+            }, 200);
+        }
+        // --- Common Functions ---
+
+        function renderPaginationControls(containerId, currentPage, totalPages, navCallback) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            const allowedNav = ['changeWorkerPage', 'changeJobPage'];
+            if (!allowedNav.includes(navCallback)) {
+                console.warn('[Pagination] Blocked invalid nav callback');
+                return;
+            }
+
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            const handler = navCallback === 'changeWorkerPage' ? window.changeWorkerPage : window.changeJobPage;
+            const wrap = document.createElement('div');
+            wrap.className = 'flex justify-center items-center gap-4 mt-6';
+            const prev = document.createElement('button');
+            prev.type = 'button';
+            prev.className = 'px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 transition';
+            prev.textContent = '➔ הקודם';
+            prev.disabled = currentPage === 1;
+            prev.addEventListener('click', () => { if (typeof handler === 'function') handler(currentPage - 1); });
+            const label = document.createElement('span');
+            label.className = 'text-sm font-bold text-slate-600';
+            label.textContent = `עמוד ${currentPage} מתוך ${totalPages}`;
+            const next = document.createElement('button');
+            next.type = 'button';
+            next.className = 'px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 transition';
+            next.textContent = 'הבא ➔';
+            next.disabled = currentPage === totalPages;
+            next.addEventListener('click', () => { if (typeof handler === 'function') handler(currentPage + 1); });
+            wrap.appendChild(prev);
+            wrap.appendChild(label);
+            wrap.appendChild(next);
+            container.innerHTML = '';
+            container.appendChild(wrap);
+        }
+
+        function checkBlockStatus() {
+            // Priority 1: Firebase Status (if loaded)
+            if (window.currentUser && window.userData && window.userData.blocked) {
+                localStorage.setItem('jobsnap_blocked', 'true'); // Sync local
+                return true;
+            }
+
+            // Priority 2: Local Storage (Fallback)
+            const isBlocked = localStorage.getItem('jobsnap_blocked') === 'true';
+
+            // Logic to Unblock if Firebase says NOT blocked (Sync back)
+            if (window.currentUser && window.userData && window.userData.blocked === false && isBlocked) {
+                localStorage.removeItem('jobsnap_blocked');
+                return false;
+            }
+
+            const fabBtn = document.getElementById('fab-post-btn');
+            const homeBtn = document.getElementById('home-post-btn');
+            const formContainer = document.getElementById('post-form-container');
+            const blockMsg = document.getElementById('blocked-screen');
+
+            // Admin Override: Admin is never blocked
+            if (window.currentUser && window.currentUser.email === ADMIN_EMAIL) {
+                if (fabBtn) fabBtn.classList.remove('hidden');
+                if (homeBtn) homeBtn.classList.remove('hidden');
+                if (formContainer) formContainer.classList.remove('hidden');
+                if (blockMsg) blockMsg.classList.add('hidden');
+                return false;
+            }
+
+            if (isBlocked) {
+                if (fabBtn) fabBtn.classList.add('hidden');
+                if (homeBtn) homeBtn.classList.add('hidden');
+                if (formContainer) formContainer.classList.add('hidden');
+                if (blockMsg) blockMsg.classList.remove('hidden');
+            } else {
+                if (fabBtn) fabBtn.classList.remove('hidden');
+                if (homeBtn) homeBtn.classList.remove('hidden');
+                if (formContainer) formContainer.classList.remove('hidden');
+                if (blockMsg) blockMsg.classList.add('hidden');
+            }
+            return isBlocked;
+        }
+
+        function updateLocationUI() {
+            const statusEl = document.getElementById('user-loc-status');
+            const navDot = document.getElementById('loc-alert-dot');
+            const hint = document.getElementById('location-hint');
+
+            if (userLocation) {
+                statusEl.innerText = '✅ מוגדר';
+                statusEl.className = "text-xs bg-green-50 px-2 py-1 rounded text-green-600 border border-green-200 font-bold";
+                if (navDot) navDot.classList.add('hidden');
+                if (hint) hint.classList.add('hidden');
+            } else {
+                statusEl.innerText = '❌ לא מוגדר';
+                statusEl.className = "text-xs bg-red-50 px-2 py-1 rounded text-red-500 border border-red-200 font-bold";
+                if (navDot) navDot.classList.remove('hidden');
+                if (hint) hint.classList.remove('hidden');
+            }
+        }
+
+        function initProfileMap() {
+            if (userMapPicker) {
+                setTimeout(() => userMapPicker.invalidateSize(), 100);
+                return;
+            }
+            const center = userLocation ? [userLocation.lat, userLocation.lng] : [32.085, 34.781];
+            userMapPicker = L.map('user-map-picker').setView(center, 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(userMapPicker);
+
+            if (userLocation) {
+                userMarkerPicker = L.marker(center).addTo(userMapPicker);
+                userMapPicker.setView(center, 14);
+            }
+
+            userMapPicker.on('click', e => {
+                setProfileMapLocation(e.latlng.lat, e.latlng.lng);
+            });
+        }
+
+        function setProfileMapLocation(lat, lng) {
+            if (userMarkerPicker) userMapPicker.removeLayer(userMarkerPicker);
+            userMarkerPicker = L.marker([lat, lng]).addTo(userMapPicker);
+            userMapPicker.setView([lat, lng], 14);
+            userLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+        }
+
+        function getProfileCurrentLocation() {
+            if (!navigator.geolocation) return showNotification('הדפדפן לא תומך במיקום', true);
+            navigator.geolocation.getCurrentPosition(pos => {
+                const { latitude, longitude } = pos.coords;
+                setProfileMapLocation(latitude, longitude);
+                fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=he`)
+                    .then(r => r.json())
+                    .then(d => {
+                        document.getElementById('profile-addr-input').value = d.display_name.split(',')[0];
+                    });
+            }, err => showNotification('שגיאה בקבלת מיקום', true));
+        }
+
+        function geocodeProfileAddress() {
+            const q = document.getElementById('profile-addr-input').value;
+            if (!q) return;
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&accept-language=he`).then(r => r.json()).then(d => {
+                if (d[0]) setProfileMapLocation(d[0].lat, d[0].lon);
+                else showNotification("כתובת לא נמצאה", true);
+            });
+        }
+
+        function saveUserProfileLocation() {
+            if (!userLocation) return showNotification("לא נבחר מיקום", true);
+            localStorage.setItem('jobsnap_user_loc', JSON.stringify(userLocation));
+            showNotification('המיקום נשמר בהצלחה!');
+            updateLocationUI();
+        }
+
+        function updateLoginHint() {
+            const hint = document.getElementById('login-hint');
+            if (!window.currentUser) {
+                hint.classList.remove('hidden');
+            } else {
+                hint.classList.add('hidden');
+            }
+        }
+
+        function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+            var R = 6371;
+            var dLat = deg2rad(lat2 - lat1);
+            var dLon = deg2rad(lon2 - lon1);
+            var a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            var d = R * c;
+            return d; // Return float number, not fixed string yet
+        }
+
+        function deg2rad(deg) { return deg * (Math.PI / 180) }
+
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return "";
+            return String(text)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        window.escapeHtml = escapeHtml;
+
+        function sanitizeImageUrl(url) {
+            if (!url || typeof url !== 'string') return '';
+            try {
+                const u = new URL(url, window.location.href);
+                if (u.protocol !== 'https:' && u.protocol !== 'http:') return '';
+                return url;
+            } catch {
+                return '';
+            }
+        }
+
+        function containsForbiddenContent(text) {
+            if (!text) return false;
+            return FORBIDDEN_WORDS.some(word => text.includes(word));
+        }
+
+        // --- HELPER: Is Job Active? ---
+        function isJobActive(job) {
+            // If it's a very old job (legacy), or missing jobDate, it might be active or inactive.
+            // Let's assume if jobDate is missing, it's NOT active if it's older than 7 days from creation.
+            if (!job.jobDate) {
+                if (!job.createdAt) return true;
+                const created = new Date(job.createdAt);
+                const weekAgo = new Date();
+                weekAgo.setDate(weekAgo.getDate() - 7);
+                return created > weekAgo;
+            }
+
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+
+            return job.jobDate >= todayStr;
+        }
+
+        function showNotification(message, isError = false) {
+            const el = document.createElement('div');
+            el.className = `notification-toast ${isError ? 'bg-red-500' : 'bg-green-500'} text-white p-4 rounded-lg shadow-lg font-bold flex items-center gap-2`;
+
+            const icon = document.createElement('span');
+            icon.innerText = isError ? '⚠️' : '✅';
+            el.appendChild(icon);
+
+            const text = document.createTextNode(' ' + message);
+            el.appendChild(text);
+
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 3000);
+        }
+
+        function showScreen(id, pushToHistory = true) {
+            console.log('[ShowScreen] Target:', id);
+
+            // 1. Hide ALL modals and cleanup stale overlays
+            const modals = ['report-modal', 'screen-payment-verify', 'screen-payment-paypal'];
+            modals.forEach(modalId => {
+                const el = document.getElementById(modalId);
+                if (el) {
+                    el.classList.add('hidden');
+                    // Also check for hidden-screen if used
+                    el.classList.add('hidden-screen');
+                }
+            });
+
+            // 2. Hide all main screen containers
+            document.querySelectorAll('div[id^="screen-"]').forEach(s => {
+                // Keep the target screen visible, hide others
+                // Special case: screen-job-details is a modal-like screen, 
+                // we only hide it if the target is NOT job-details.
+                if (s.id === 'screen-' + id) {
+                    s.classList.remove('hidden-screen');
+                } else if (s.id !== 'screen-job-details' || id !== 'job-details') {
+                    s.classList.add('hidden-screen');
+                }
+            });
+
+            const target = document.getElementById('screen-' + id);
+            if (target) {
+                target.classList.remove('hidden-screen');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                // Specific Screen Init
+                if (id === 'post') {
+                    checkBlockStatus();
+                    setTimeout(initPickerMap, 200);
+                } else if (id === 'feed') {
+                    // Close filter panel if open
+                    const fp = document.getElementById('filter-panel');
+                    if (fp && fp.classList.contains('open')) fp.classList.remove('open');
+                    renderJobs();
+                    updateLoginHint();
+                } else if (id === 'workers') {
+                    const wp = document.getElementById('worker-filter-panel');
+                    if (wp && wp.classList.contains('open')) wp.classList.remove('open');
+                    renderWorkers();
+                } else if (id === 'profile') {
+                    updateProfileStats();
+                    updateLocationUI();
+                    setTimeout(initProfileMap, 200);
+                    checkWorkerStatus();
+                } else if (id === 'admin-users') {
+                    if (typeof loadAllUsers === 'function') loadAllUsers();
+                }
+
+                // Invalidate all map sizes whenever the screen changes
+                if (mapPicker) setTimeout(() => mapPicker.invalidateSize(), 200);
+                if (mapView) setTimeout(() => mapView.invalidateSize(), 200);
+                if (workerMap) setTimeout(() => workerMap.invalidateSize(), 200);
+            }
+
+            if (pushToHistory) {
+                history.pushState({ screen: id }, '', '#' + id);
+            }
+
+            logAnalytics('view_screen', { screen_name: id });
+        }
+
+        function checkAuthAndNavigate(targetScreen) {
+            if (window.currentUser) {
+                if (targetScreen === 'post') {
+                    // --- FIX: Reset State for NEW job (Edit starts via startEditJob) ---
+                    isEditing = false;
+                    openJobId = null;
+                    const pf = document.getElementById('post-form');
+                    if (pf) pf.reset();
+
+                    const pTitle = document.getElementById('post-screen-title');
+                    const pSubmit = document.getElementById('submit-job-btn');
+                    const pCancel = document.getElementById('cancel-edit-btn');
+                    if (pTitle) pTitle.innerText = "יצירת משרה חדשה";
+                    if (pSubmit) {
+                        pSubmit.innerText = "פרסם משרה עכשיו";
+                        pSubmit.disabled = false;
+                    }
+                    if (pCancel) pCancel.classList.add('hidden');
+
+                    // Reset Map Marker for New Job
+                    if (markerPicker && mapPicker) {
+                        mapPicker.removeLayer(markerPicker);
+                        markerPicker = null;
+                        document.getElementById('p-lat').value = '';
+                        document.getElementById('p-lng').value = '';
+                    }
+                    const lStatus = document.getElementById('loc-status');
+                    if (lStatus) {
+                        lStatus.innerText = "⚠️ חובה לבחור מיקום על המפה";
+                        lStatus.className = "text-xs text-red-500 mt-2 font-bold bg-red-50 p-2 rounded-lg inline-block border border-red-100";
+                    }
+                    // -----------------------------------------------------------------
+
+                    checkBlockStatus(); // Updates UI for post screen (normal vs blocked)
+
+                    // If the user is blocked, we still allow them to see the 'post' screen (where they see the block message)
+                    if (localStorage.getItem('jobsnap_blocked') === 'true' || (window.userData && window.userData.blocked)) {
+                        showScreen('post');
+                        return;
+                    }
+
+                    // --- JOB LIMIT CHECK (Max 2 active jobs) ---
+                    const myJobCount = (window.allJobs || []).filter(j => j.userId === window.currentUser.uid && isJobActive(j)).length;
+                    const canBypass = window.currentUser.email === ADMIN_EMAIL;
+
+                    if (myJobCount >= 2 && !canBypass) {
+                        showNotification('⚠️ הגעת למגבלת המשרות (מקסימום 2 בו-זמנית).', true);
+                        showNotification('ניתן למחוק משרה קיימת בפרופיל כדי לפרסם חדשה. 💡');
+                        return;
+                    }
+                    // -------------------------------------------
+                }
+                showScreen(targetScreen);
+            } else {
+                showNotification("נא להתחבר כדי להמשיך");
+                showScreen('login');
+            }
+        }
+
+        async function loginWithGoogle() {
+            try {
+                const result = await window.fb.signInWithPopup(window.fb.auth, window.fb.googleProvider);
+                showNotification(`ברוך הבא, ${result.user.displayName}`);
+                showScreen('home');
+                logAnalytics('login', { method: 'google' });
+            } catch (error) {
+                console.error(error);
+                showNotification("שגיאה בהתחברות Google", true);
+            }
+        }
+
+
+        function handleLogout() {
+            window.fb.signOut(window.fb.auth).then(() => {
+                showNotification("התנתקת בהצלחה");
+                showScreen('home');
+            });
+        }
+
+        window.changeJobPage = function (newPage) {
+            currentJobPage = newPage;
+            renderJobs();
+            document.getElementById('screen-feed').scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        window.renderJobs = function () {
+            try {
+                const container = document.getElementById('jobs-container');
+                if (!container) { alert('ERROR: jobs-container missing'); return; }
+                const searchInput = document.getElementById('search-input');
+                const query = searchInput ? searchInput.value.toLowerCase() : '';
+                let jobs = window.allJobs || [];
+
+                container.innerHTML = '';
+
+                let filtered = jobs.filter(j => {
+                    let reason = 'Keep';
+
+                    // 1. Text Search
+                    const matchesSearch = (currentCategory === 'all' || j.category === currentCategory) &&
+                        (j.title.toLowerCase().includes(query) || j.locText.toLowerCase().includes(query));
+
+                    if (!matchesSearch) reason = 'Search/Category';
+
+                    // 2. Advanced Filters
+                    let matchesAdvanced = true;
+                    if (activeFilters.jobs.priceMin && j.rate < activeFilters.jobs.priceMin) { matchesAdvanced = false; reason = 'PriceMin'; }
+                    if (activeFilters.jobs.priceMax && j.rate > activeFilters.jobs.priceMax) { matchesAdvanced = false; reason = 'PriceMax'; }
+
+                    if (activeFilters.jobs.date !== 'all') {
+                        const jobDate = new Date(j.createdAt);
+                        const now = new Date();
+                        const diffTime = Math.abs(now - jobDate);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                        if (activeFilters.jobs.date === 'today' && diffDays > 1) { matchesAdvanced = false; reason = 'Date(Today)'; }
+                        if (activeFilters.jobs.date === 'week' && diffDays > 7) { matchesAdvanced = false; reason = 'Date(Week)'; }
+                        if (activeFilters.jobs.date === 'month' && diffDays > 30) { matchesAdvanced = false; reason = 'Date(Month)'; }
+                    }
+
+                    // Payment Type Filter
+                    if (activeFilters.jobs.paymentType && activeFilters.jobs.paymentType !== 'all') {
+                        if (j.salaryType !== activeFilters.jobs.paymentType) { matchesAdvanced = false; reason = `PaymentType (Has: ${j.salaryType} vs Want: ${activeFilters.jobs.paymentType})`; }
+                    }
+
+                    // Expiry Date & Time Filter (Auto-delete visual)
+                    if (j.jobDate) {
+                        const now = new Date();
+                        const year = now.getFullYear();
+                        const month = String(now.getMonth() + 1).padStart(2, '0');
+                        const day = String(now.getDate()).padStart(2, '0');
+                        const todayStr = `${year}-${month}-${day}`;
+
+                        if (j.jobDate < todayStr) {
+                            matchesAdvanced = false;
+                            reason = `Expired (Job: ${j.jobDate} < Today: ${todayStr})`;
+                        }
+                        // Time filter relaxed
+                    }
+
+                    if (!matchesSearch || !matchesAdvanced) {
+                        console.log(`[JobFiltered] ID:${j.id} Title:${j.title} Reason:${reason}`);
+                        return false;
+                    }
+                    return true;
+                });
+
+                // Calculate distances always if location exists
+                if (userLocation) {
+                    filtered = filtered.map(job => {
+                        let dist = 9999;
+                        if (job.isAllCountry) {
+                            dist = 0;
+                        } else {
+                            dist = getDistanceFromLatLonInKm(userLocation.lat, userLocation.lng, job.lat, job.lng);
+                        }
+                        return { ...job, distance: parseFloat(dist) };
+                    });
+
+                    // Filter by Max Distance
+                    if (activeFilters.jobs.distance < 100) {
+                        filtered = filtered.filter(j => (j.distance || 0) <= activeFilters.jobs.distance);
+                    }
+
+                    const hint = document.getElementById('location-hint');
+                    if (hint) hint.classList.add('hidden');
+                } else {
+                    const hint = document.getElementById('location-hint');
+                    if (hint) hint.classList.remove('hidden');
+                }
+
+                // Universal Sort Logic
+                filtered.sort((a, b) => {
+                    if (a.isPremium && !b.isPremium) return -1;
+                    if (!a.isPremium && b.isPremium) return 1;
+
+                    const sortType = activeFilters.jobs.sort;
+
+                    if (sortType === 'newest') {
+                        const dateB = b.createdAt ? new Date(b.createdAt) : 0;
+                        const dateA = a.createdAt ? new Date(a.createdAt) : 0;
+                        return dateB - dateA;
+                    }
+                    if (sortType === 'oldest') {
+                        const dateB = b.createdAt ? new Date(b.createdAt) : 0;
+                        const dateA = a.createdAt ? new Date(a.createdAt) : 0;
+                        return dateA - dateB;
+                    }
+
+                    if (sortType === 'salary_desc') return (b.rate || 0) - (a.rate || 0);
+                    if (sortType === 'salary_asc') return (a.rate || 0) - (b.rate || 0);
+
+                    if (sortType === 'closest' && userLocation) {
+                        return (a.distance || 99999) - (b.distance || 99999);
+                    }
+
+                    return 0;
+                });
+
+                // Pagination Logic
+                const totalItems = filtered.length;
+                const totalPages = Math.ceil(totalItems / jobItemsPerPage);
+
+                if (currentJobPage > totalPages) currentJobPage = 1;
+
+                const startIdx = (currentJobPage - 1) * jobItemsPerPage;
+                const endIdx = startIdx + jobItemsPerPage;
+                const displayedJobs = filtered.slice(startIdx, endIdx);
+
+                renderPaginationControls('jobs-pagination', currentJobPage, totalPages, 'changeJobPage');
+
+                if (filtered.length === 0) {
+                    container.innerHTML = `
+                    <div class="text-center text-slate-400 mt-12 flex flex-col items-center">
+                        <span class="text-5xl mb-4 opacity-50">🏜️</span>
+                        <span class="font-medium">לא נמצאו משרות כרגע...</span>
+                        <p class="text-[10px] text-slate-300 mt-2 dir-ltr font-mono">D: ${jobs.length} / F: ${filtered.length}</p>
+                        <p class="text-[10px] text-slate-300 mt-1 dir-ltr font-mono">U: ${window.currentUser ? 'Auth' : 'Guest'} / L: ${userLocation ? 'Set' : 'None'}</p>
+                        <button onclick="resetFilters()" class="mt-4 text-blue-600 font-bold hover:underline">נקה סינון</button>
+                    </div>`;
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                    return;
+                }
+
+                displayedJobs.forEach((job, index) => {
+                    const total = job.salaryType === 'fixed' ? job.rate : (job.rate * job.hours);
+                    // isSaved removed from here, defined later
+                    const timeAgo = getTimeAgo(new Date(job.createdAt));
+
+                    // Calculate isNearest considering ORIGINAL index logic but restricted to first page
+                    // Or just if it's the absolute first in sorted list? 
+                    // Let's keep logic simple: if it's the first in the visible list AND distance is small
+                    // But generally "Nearest" should probably be global. 
+                    // If I paginate, the first item on page 2 is not the "Nearest" relative to page 1.
+                    // But the list is sorted by distance! So items on page 1 are the nearest.
+
+                    const isNearest = userLocation && !job.isPremium && (index === 0 && currentJobPage === 1) && job.distance < 50;
+
+                    const el = document.createElement('div');
+                    el.className = `card-base p-4 rounded-2xl cursor-pointer group ${job.isPremium ? 'premium-glow' : (isNearest ? 'nearest-glow' : '')}`;
+                    el.onclick = () => openDetails(job.id);
+
+                    let distBadge = '';
+                    if (job.isAllCountry) {
+                        distBadge = `<div class="text-blue-600 font-bold text-[10px] bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">🌍 בכל הארץ</div>`;
+                    } else if (userLocation) {
+                        let d = job.distance;
+                        let dText = d < 1 ? Math.round(d * 1000) + ' מ׳' : d.toFixed(1) + ' ק״מ';
+                        distBadge = `<span class="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-1 rounded-md font-bold flex items-center gap-1">📍 ${dText}</span>`;
+                    }
+
+                    let isSaved = savedJobs.includes(job.id);
+                    // Fix for saved jobs not updating correctly visually in some cases
+                    if (window.currentUser && window.userData && window.userData.savedJobs && window.userData.savedJobs[job.id]) {
+                        isSaved = true;
+                    }
+
+                    let badgeHTML = '';
+                    if (job.isPremium) badgeHTML = `<div class="premium-badge"><i data-lucide="crown" class="w-3 h-3 inline"></i> מומלץ</div>`;
+                    else if (isNearest) badgeHTML = `<div class="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 mb-2 inline-block rounded-md border border-green-200"><i data-lucide="zap" class="w-3 h-3 inline"></i> הכי קרובה אליך!</div>`;
+
+                    let rateDisplay = '';
+                    if (job.salaryType === 'fixed') {
+                        rateDisplay = '<div class="mt-1.5 text-[11px] font-bold text-slate-500 bg-slate-50 p-1 rounded-lg inline-block border border-slate-100">💰 מחיר גלובלי קבוע</div>';
+                    } else {
+                        rateDisplay = `
+                        <div class="mt-1.5 text-[11px] flex flex-wrap items-center gap-1.5 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                        <span class="font-bold text-slate-600">₪${job.rate}<span class="text-[9px] font-normal">/שעה</span></span>
+                        <span class="text-slate-300">×</span>
+                        <span class="font-bold text-slate-600">${job.hours}<span class="text-[9px] font-normal">ש'</span></span>
+                        <span class="text-slate-300 font-light text-[9px] ml-auto">סה"כ:</span>
+                        <span class="font-black text-blue-600 dir-ltr text-xs">₪${total}</span>
+                    </div>`;
+                    }
+
+                    // Payment Method Badge
+                    const pmMap = {
+                        'cash': '<i data-lucide="banknote" class="w-3 h-3 inline"></i> מזומן',
+                        'bit': '<i data-lucide="smartphone" class="w-3 h-3 inline"></i> ביט',
+                        'transfer': '<i data-lucide="landmark" class="w-3 h-3 inline"></i> העברה',
+                        'credit': '<i data-lucide="credit-card" class="w-3 h-3 inline"></i> אשראי',
+                        'check': '<i data-lucide="file-text" class="w-3 h-3 inline"></i> צ\'ק'
+                    };
+                    const pmText = pmMap[job.paymentMethod] || '<i data-lucide="banknote" class="w-3 h-3 inline"></i> מזומן';
+                    const pmBadge = `<span class="bg-emerald-50 text-emerald-700 text-[10px] px-2 py-0.5 rounded-md font-bold border border-emerald-100">${pmText}</span>`;
+
+                    // Address logic: prioritize full address if available
+                    const displayAddress = job.fullAddress || job.locText || 'מיקום לא צוין';
+
+                    const jsSafeJobId = job.id.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    el.innerHTML = `
+                    ${badgeHTML}
+                    <div class="mb-2 ${job.isPremium ? 'mt-2' : ''}">
+                        <div class="flex items-center gap-2 flex-wrap pr-8">
+                            <span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded-md font-bold border border-slate-200">${getCategoryName(job.category)}</span>
+                            <span class="bg-orange-100 text-orange-700 text-[10px] px-2 py-0.5 rounded-md font-bold border border-orange-200">☀️ יומית</span>
+                            ${pmBadge}
+                            ${distBadge}
+                            <span class="text-[10px] text-slate-400 border-r border-slate-200 pr-2 mr-1">${timeAgo}</span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-end mb-2">
+                        <div>
+                            <h3 class="font-bold text-base text-slate-800 group-hover:text-blue-600 transition-colors leading-tight">${escapeHtml(job.title)}</h3>
+                            <div class="text-xs text-slate-500 mt-1 flex items-center gap-1 font-medium"><i data-lucide="map-pin" class="w-3 h-3"></i> ${escapeHtml(displayAddress)}</div>
+                            ${rateDisplay}
+                        </div>
+                        <div class="text-left flex flex-col items-end">
+                            <div class="text-xl font-black text-blue-600 leading-none">₪${total}</div>
+                        </div>
+                    </div>
+                    
+                    <button class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl shadow hover:bg-black transition text-xs">
+                        עוד פרטים
+                    </button>
+
+                    <button onclick="event.stopPropagation(); toggleSave('${jsSafeJobId}')" class="absolute top-4 left-4 bg-white/90 backdrop-blur px-2 py-1 rounded-full text-[10px] font-bold shadow-sm border border-slate-100 flex items-center gap-1 transition hover:bg-white hover:shadow-md ${isSaved ? 'text-red-500' : 'text-slate-500'}">
+                        <i data-lucide="heart" class="w-3 h-3 ${isSaved ? 'fill-current' : ''}"></i>
+                        <span>${isSaved ? 'נשמר' : 'שמור'}</span>
+                    </button>
+                    `;
+                    container.appendChild(el);
+                });
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            } catch (e) {
+                console.error('CRITICAL RENDER ERROR:', e);
+                alert('CRITICAL RENDER ERROR:\n' + e.message);
+            }
+        };
+
+        async function publishJob() {
+            if (!window.currentUser) return;
+
+            // Honeypot Check
+            if (document.getElementById('hp-job').value) {
+                console.warn('Bot detected (job honeypot)');
+                return;
+            }
+
+            // Rate Limit Check
+            if (!RateLimiter.check('post_job')) return;
+
+            // Check for FULL block first
+            if (checkBlockStatus()) {
+                showNotification('החשבון שלך חסום לחלוטין', true);
+                return;
+            }
+
+            // Check for POSTING block
+            if (window.userData && window.userData.blocked_posting === true) {
+                showNotification('החשבון שלך חסום לפרסום משרות בלבד. אתה יכול להמשיך לגלוש ולראות משרות.', true);
+                return;
+            }
+
+            const btn = document.getElementById('submit-job-btn');
+            const title = document.getElementById('p-title').value;
+            const rate = document.getElementById('p-rate').value;
+            const hours = document.getElementById('p-hours').value;
+            const lat = document.getElementById('p-lat').value;
+            const desc = document.getElementById('p-desc').value;
+            const salaryType = document.getElementById('p-salary-type').value;
+            const isPremium = document.getElementById('p-is-premium').value === 'true';
+
+            const isAllCountry = document.getElementById('p-all-country').checked;
+            const date = document.getElementById('p-date').value;
+            const time = document.getElementById('p-time').value;
+            const address = document.getElementById('p-address-input').value;
+
+            if (!title || !rate || (!isAllCountry && (!lat || !address)) || !date) return showNotification('נא למלא את כל השדות (כולל תאריך ומיקום)', true);
+
+            const hebrewOnlyRegex = /^[\u0590-\u05FF0-9\s\p{P}\p{S}]+$/u;
+            if (!hebrewOnlyRegex.test(title)) {
+                showNotification('כותרת המשרה חייבת להיות בעברית בלבד (ללא אותיות באנגלית)', true);
+                return;
+            }
+
+            if (containsForbiddenContent(title) || containsForbiddenContent(desc)) {
+                localStorage.setItem('jobsnap_blocked', 'true');
+
+                // Block in Firebase
+                if (window.currentUser) {
+                    window.fb.update(window.fb.ref(window.fb.db, 'users/' + window.currentUser.uid), { blocked: true });
+                }
+
+                checkBlockStatus();
+                showNotification('החשבון נחסם לצמיתות עקב תוכן אסור', true);
+                showScreen('post');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = 'מפרסם...';
+
+            const uName = window.currentUser.displayName || window.currentUser.email.split('@')[0];
+
+            let jobData = {
+                title: title,
+                category: document.getElementById('p-category').value,
+                phone: document.getElementById('p-phone').value,
+                rate: Number(rate),
+                hours: Number(hours) || 1, // Default to 1 if empty/hidden
+                salaryType: salaryType,
+                paymentMethod: document.getElementById('p-payment-method').value, // Added
+                isAllCountry: isAllCountry,
+                lat: isAllCountry ? 0 : parseFloat(lat),
+                lng: isAllCountry ? 0 : parseFloat(document.getElementById('p-lng').value),
+                locText: isAllCountry ? 'בכל הארץ 🌍' : (document.getElementById('p-address-input').value || 'מיקום במפה'), // Updated
+                fullAddress: isAllCountry ? 'בכל הארץ' : address, // Added
+                description: desc,
+                userId: window.currentUser.uid,
+                userName: uName,
+                userEmail: window.currentUser.email || '',
+                isPremium: isPremium,
+                createdAt: new Date().toISOString(),
+                jobDate: date, // Save expiry date
+                jobTime: time, // Save expiry time
+                views: 0, // Added
+                rating: 0, // Added
+                ratingCount: 0 // Added
+            };
+
+            // Sanitize Data
+            jobData = sanitizeData(jobData);
+
+            try {
+                if (isEditing && openJobId) {
+                    delete jobData.createdAt;
+                    await window.fb.update(window.fb.ref(window.fb.db, 'jobs/' + openJobId), jobData);
+                    showNotification('המשרה עודכנה בהצלחה');
+                } else {
+                    // --- JOB LIMIT CHECK (Max 2 active jobs) - REDUNDANT SAFETY ---
+                    const myJobCount = (window.allJobs || []).filter(j => j.userId === window.currentUser.uid && isJobActive(j)).length;
+                    const canBypass = window.currentUser.email === ADMIN_EMAIL;
+
+                    if (myJobCount >= 2 && !canBypass) {
+                        throw new Error('הגעת למגבלת המשרות (מקסימום 2). נא למחוק משרה ישנה.');
+                    }
+                    // -------------------------------------------------------------
+
+                    await window.fb.push(window.fb.ref(window.fb.db, 'jobs'), jobData);
+                    RateLimiter.record('post_job'); // Record success
+                    showNotification('המשרה פורסמה בהצלחה!');
+                    logAnalytics('job_published');
+                }
+
+                cancelEdit();
+                showScreen('feed');
+            } catch (e) {
+                console.error(e);
+                showNotification('שגיאה בפרסום', true);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'פרסם משרה עכשיו';
+            }
+        }
+
+        function openDetails(id, pushHistory = true) {
+            const job = window.allJobs.find(j => j.id === id);
+            if (!job) return;
+            openJobId = id;
+
+            if (pushHistory) {
+                history.pushState({ screen: 'job-details', id: id }, '', `#job-${id}`);
+            }
+            logAnalytics('view_job_details', { jobId: id });
+
+            const total = job.salaryType === 'fixed' ? job.rate : (job.rate * job.hours);
+            const paymentTypeHebrew = job.salaryType === 'fixed' ? 'גלובלי (מחיר קבוע)' : 'לפי שעה';
+
+            const ptd = document.getElementById('d-payment-type-display');
+            if (ptd) ptd.innerText = paymentTypeHebrew;
+
+            // Payment Method Display
+            const pmMap = {
+                'cash': '💵 תשלום במזומן',
+                'bit': '📱 תשלום בביט/אפליקציה',
+                'transfer': '🏦 העברה בנקאית',
+                'credit': '💳 אשראי / חשבונית',
+                'check': '📝 צ\'ק'
+            };
+            const pmd = document.getElementById('d-payment-method-display');
+            if (pmd) pmd.innerText = pmMap[job.paymentMethod] || '💵 תשלום במזומן';
+
+            // Or better, update d-rate-type text if exists
+            // Let's check HTML. Actually I'll append it to d-rate logic.
+
+            const titleEl = document.getElementById('d-title');
+            if (titleEl) titleEl.innerText = job.title;
+
+            const totalEl = document.getElementById('d-total');
+            if (totalEl) totalEl.innerText = total;
+
+            // Safe update for d-rate
+            const rateEl = document.getElementById('d-rate');
+            if (rateEl) rateEl.innerText = job.rate;
+
+            // Adjust display for fixed price
+            const rateContainer = document.getElementById('d-rate-container');
+            const hoursContainer = document.getElementById('d-hours-container');
+
+            if (job.salaryType === 'fixed') {
+                if (rateContainer) rateContainer.innerHTML = 'מחיר גלובלי';
+                if (hoursContainer) hoursContainer.style.display = 'none';
+            } else {
+                if (rateContainer) rateContainer.innerHTML = `₪<span id="d-rate">${job.rate}</span> / שעה`;
+                if (hoursContainer) {
+                    hoursContainer.style.display = 'block';
+                    const hoursEl = document.getElementById('d-hours');
+                    if (hoursEl) hoursEl.innerText = job.hours;
+                }
+            }
+
+            const descEl = document.getElementById('d-desc');
+            if (descEl) descEl.innerText = job.description;
+
+            // Show job creator email
+            const emailEl = document.getElementById('d-contact-email');
+            const emailContainer = document.getElementById('d-email-container');
+            if (emailEl) {
+                const isOwner = window.currentUser && job.userId === window.currentUser.uid;
+                const isAdmin = window.currentUser && window.currentUser.email === ADMIN_EMAIL;
+
+                if (!isOwner && !isAdmin) {
+                    if (emailContainer) emailContainer.classList.add('hidden');
+                    emailEl.innerText = 'מוסתר – זמין רק למפרסם';
+                } else {
+                    if (emailContainer) emailContainer.classList.remove('hidden');
+                    // Owner/admin view – try to show real email
+                    if (job.userEmail) {
+                        emailEl.innerText = job.userEmail;
+                    } else if (window.currentUser && isOwner) {
+                        const liveEmail = window.currentUser.email || '';
+                        emailEl.innerText = liveEmail || 'לא זמין';
+                        if (liveEmail) {
+                            window.fb.update(window.fb.ref(window.fb.db, 'jobs/' + id), { userEmail: liveEmail }).catch(() => { });
+                        }
+                    } else if (job.userId && window.fb) {
+                        emailEl.innerText = 'טוען...';
+                        window.fb.get(window.fb.ref(window.fb.db, 'users/' + job.userId))
+                            .then(snap => {
+                                const u = snap.val();
+                                const fetchedEmail = (u && u.email) || '';
+                                emailEl.innerText = fetchedEmail || 'לא זמין';
+                                if (fetchedEmail) {
+                                    window.fb.update(window.fb.ref(window.fb.db, 'jobs/' + id), { userEmail: fetchedEmail }).catch(() => { });
+                                }
+                            }).catch(() => { emailEl.innerText = 'לא זמין'; });
+                    } else {
+                        emailEl.innerText = 'לא זמין';
+                    }
+                }
+            }
+
+            document.getElementById('d-category').innerText = getCategoryName(job.category);
+            document.getElementById('d-time').innerText = getTimeAgo(new Date(job.createdAt));
+
+            const cleanPhone = job.phone.replace(/\D/g, '').replace(/^0/, '972');
+            document.getElementById('btn-whatsapp').onclick = () => {
+                if (!RateLimiter.check('contact')) return;
+                RateLimiter.record('contact'); // Record contact attempt
+
+                logAnalytics('contact_whatsapp', { jobId: id });
+                window.open(`https://wa.me/${cleanPhone}`, '_blank');
+            };
+            document.getElementById('btn-waze').href = `https://waze.com/ul?ll=${job.lat},${job.lng}&navigate=yes`;
+            document.getElementById('btn-google').href = `http://googleusercontent.com/maps.google.com/?q=${job.lat},${job.lng}`;
+
+            const isOwner = window.currentUser && (job.userId === window.currentUser.uid || window.currentUser.email === ADMIN_EMAIL);
+            document.getElementById('owner-actions').classList.toggle('hidden', !isOwner);
+
+            document.getElementById('screen-job-details').classList.remove('hidden-screen');
+
+            // Load ratings & Bind Click Events
+            const ratingContainer = document.getElementById('job-rating-stars');
+            const badge = document.getElementById('rating-display-badge');
+            const ratingSection = ratingContainer?.parentElement?.parentElement; // Get the rating-container div
+
+            // Hide rating section if user is the owner
+            if (ratingSection) {
+                if (isOwner) {
+                    ratingSection.style.display = 'none';
+                } else {
+                    ratingSection.style.display = 'block';
+                }
+            }
+
+            if (ratingContainer && badge && !isOwner) {
+                ratingContainer.dataset.targetId = job.userId;
+                badge.dataset.targetId = job.userId;
+
+                ratingContainer.querySelectorAll('.rating-star').forEach(star => {
+                    // Click handler
+                    star.onclick = (e) => {
+                        e.stopPropagation();
+                        rateUser(parseInt(star.dataset.score), job.userId, 'business');
+                    };
+
+                    // Hover handlers for preview
+                    star.onmouseenter = function () {
+                        const hoverScore = parseInt(this.dataset.score);
+                        ratingContainer.querySelectorAll('.rating-star').forEach(s => {
+                            const score = parseInt(s.dataset.score);
+                            if (score <= hoverScore) {
+                                s.innerText = '★';
+                                s.style.color = '#fbbf24';
+                            } else {
+                                const isRated = s.classList.contains('text-yellow-400');
+                                s.innerText = isRated ? '★' : '☆';
+                                s.style.color = '';
+                            }
+                        });
+                    };
+                });
+
+                // Reset on mouse leave
+                ratingContainer.onmouseleave = function () {
+                    this.querySelectorAll('.rating-star').forEach(s => {
+                        const isRated = s.classList.contains('text-yellow-400');
+                        s.innerText = isRated ? '★' : '☆';
+                        s.style.color = '';
+                    });
+                };
+
+                setTimeout(() => loadRatings(job.userId, 'business'), 200);
+            }
+
+            // Hide/show report button based on ownership
+            const reportSection = document.getElementById('report-job-section');
+            if (reportSection) {
+                if (isOwner) {
+                    reportSection.style.display = 'none';
+                } else {
+                    reportSection.style.display = 'block';
+                }
+            }
+
+            setTimeout(() => {
+                const mapContainer = document.getElementById('map-view');
+                if (mapView) { mapView.remove(); mapView = null; }
+
+                if (job.isAllCountry) {
+                    mapContainer.innerHTML = `
+                        <div class="h-full w-full bg-blue-600/10 flex flex-col items-center justify-center text-center p-6 backdrop-blur-sm">
+                            <div class="text-5xl mb-4 drop-shadow-lg">🌍</div>
+                            <div class="text-xl font-black text-blue-900">משרה זמינה בכל הארץ</div>
+                            <div class="text-sm text-blue-700 font-bold opacity-80 mt-2">המשרה אינה מוגבלת למיקום ספציפי אחד</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                mapView = L.map('map-view', { zoomControl: false }).setView([job.lat, job.lng], 15);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(mapView);
+                L.marker([job.lat, job.lng]).addTo(mapView);
+            }, 300);
+        }
+
+        async function deleteCurrentJob() {
+            if (!confirm('האם למחוק את המשרה לצמיתות?')) return;
+            try {
+                await window.fb.remove(window.fb.ref(window.fb.db, 'jobs/' + openJobId));
+                showNotification('המשרה נמחקה');
+                closeDetails();
+            } catch (e) {
+                showNotification('שגיאה במחיקה - אין הרשאה', true);
+            }
+        }
+
+        function startEditJob() {
+            const job = window.allJobs.find(j => j.id === openJobId);
+            if (!job) return;
+
+            isEditing = true;
+            showScreen('post');
+
+            document.getElementById('post-screen-title').innerText = "עריכת משרה";
+            document.getElementById('submit-job-btn').innerText = "שמור שינויים";
+            document.getElementById('cancel-edit-btn').classList.remove('hidden');
+
+            document.getElementById('p-title').value = job.title;
+            document.getElementById('p-category').value = job.category;
+            document.getElementById('p-phone').value = job.phone;
+            document.getElementById('p-rate').value = job.rate;
+            document.getElementById('p-hours').value = job.hours;
+            document.getElementById('p-desc').value = job.description;
+            document.getElementById('p-address-input').value = job.locText;
+            document.getElementById('p-lat').value = job.lat;
+            document.getElementById('p-lng').value = job.lng;
+            document.getElementById('p-salary-type').value = job.salaryType || 'hourly';
+
+            document.getElementById('p-all-country').checked = !!job.isAllCountry;
+            toggleJobAllCountry();
+
+            toggleHoursInput();
+        }
+
+        function cancelEdit() {
+            isEditing = false;
+            openJobId = null;
+            document.getElementById('post-form').reset();
+            document.getElementById('post-screen-title').innerText = "יצירת משרה חדשה";
+            document.getElementById('submit-job-btn').innerText = "פרסם משרה עכשיו";
+            document.getElementById('cancel-edit-btn').classList.add('hidden');
+            toggleHoursInput();
+            showScreen('feed');
+        }
+
+        function closeDetails() {
+            document.getElementById('screen-job-details').classList.add('hidden-screen');
+            // If the hash is still job-id, go back in history to clean up URL
+            if (history.state && history.state.screen === 'job-details') {
+                history.back();
+            } else {
+                showScreen('feed');
+            }
+        }
+
+        function toggleSave(id) {
+            if (!window.currentUser) {
+                showNotification('עליך להתחבר כדי לשמור משרות', true);
+                checkAuthAndNavigate('profile');
+                return;
+            }
+            const idx = savedJobs.indexOf(id);
+            if (idx > -1) {
+                savedJobs.splice(idx, 1);
+                showNotification('הוסר מהשמורים');
+            } else {
+                savedJobs.push(id);
+                showNotification('נוסף לשמורים בהצלחה!');
+            }
+            localStorage.setItem('jobsnap_saved', JSON.stringify(savedJobs));
+            if (!document.getElementById('screen-feed').classList.contains('hidden-screen')) renderJobs();
+            if (!document.getElementById('screen-profile').classList.contains('hidden-screen')) updateProfileStats();
+        }
+
+        function updateProfileStats() {
+            if (!window.currentUser) return;
+            const myJobs = (window.allJobs || []).filter(j => j.userId === window.currentUser.uid && isJobActive(j));
+            document.getElementById('my-jobs-count').innerText = myJobs.length;
+            document.getElementById('saved-jobs-count').innerText = savedJobs.length;
+
+            const list = document.getElementById('saved-jobs-list');
+            if (list) {
+                if (!savedJobs || savedJobs.length === 0) {
+                    list.innerHTML = '<div class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">עדיין לא שמרת משרות 🧡</div>';
+                } else {
+                    const jobsSource = window.allJobs || [];
+                    list.innerHTML = savedJobs.map(id => {
+                        const j = jobsSource.find(x => x.id === id);
+                        if (!j) return '';
+                        return `
+                        <div onclick="openDetails('${j.id}')" class="bg-white p-3 rounded-xl border flex justify-between items-center cursor-pointer mb-2 shadow-sm hover:shadow-md transition">
+                            <div class="flex justify-between items-center w-full">
+                                <div>
+                                    <div class="font-bold text-sm text-slate-800">${escapeHtml(j.title)}</div>
+                                    <div class="text-xs text-slate-500">₪${j.rate}/שעה • ${escapeHtml(j.locText || '')}</div>
+                                </div>
+                                <button onclick="event.stopPropagation(); toggleSave('${id}')" class="text-red-500 bg-red-50 p-2 rounded-lg hover:bg-red-100 transition">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>`;
+                    }).join('') || '<div class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">עדיין לא שמרת משרות 🧡</div>';
+                }
+            }
+
+            // Load user's ratings
+            loadMyRatings();
+        }
+
+        async function loadMyRatings() {
+            if (!window.currentUser) return;
+
+            const container = document.getElementById('my-ratings-list');
+            if (!container) return;
+
+            try {
+                // Get all ratings given by this user
+                const ratingsRef = window.fb.ref(window.fb.db, 'ratings');
+                window.fb.onValue(ratingsRef, async (snapshot) => {
+                    const allRatings = snapshot.val();
+                    const myRatings = [];
+
+                    if (allRatings) {
+                        // Loop through all types (business, worker)
+                        Object.entries(allRatings).forEach(([type, targets]) => {
+                            // Loop through all targets
+                            Object.entries(targets).forEach(([targetId, ratings]) => {
+                                // Check if this user rated this target
+                                if (ratings[window.currentUser.uid]) {
+                                    myRatings.push({
+                                        type: type,
+                                        targetId: targetId,
+                                        score: ratings[window.currentUser.uid].score,
+                                        timestamp: ratings[window.currentUser.uid].timestamp
+                                    });
+                                }
+                            });
+                        });
+                    }
+
+                    console.log('[MyRatings] Found ratings:', myRatings);
+
+                    if (myRatings.length === 0) {
+                        container.innerHTML = '<div class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">עדיין לא דירגת 🌟</div>';
+                        return;
+                    }
+
+                    // Sort by timestamp (newest first)
+                    myRatings.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                    // Render ratings
+                    container.innerHTML = myRatings.map(rating => {
+                        let targetName = 'לא ידוע';
+                        let targetInfo = '';
+
+                        if (rating.type === 'business') {
+                            // Find the job owner
+                            const job = window.allJobs?.find(j => j.userId === rating.targetId);
+                            targetName = job ? job.userName : 'מעסיק';
+                            targetInfo = job ? job.title : '';
+                        } else if (rating.type === 'worker') {
+                            // Find the worker
+                            const worker = window.allWorkers?.find(w => w.uid === rating.targetId);
+                            targetName = worker ? worker.name : 'בעל מקצוע';
+                            targetInfo = worker ? worker.profession : '';
+                        }
+
+                        const stars = '★'.repeat(rating.score) + '☆'.repeat(5 - rating.score);
+                        const typeEmoji = rating.type === 'business' ? '💼' : '👷';
+                        const date = new Date(rating.timestamp).toLocaleDateString('he-IL');
+
+                        return `
+                            <div class="rating-container p-4">
+                                <div class="relative z-10">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xl">${typeEmoji}</span>
+                                            <div>
+                                                <div class="font-bold text-sm text-amber-900">${escapeHtml(targetName)}</div>
+                                                ${targetInfo ? `<div class="text-xs text-amber-700">${escapeHtml(targetInfo)}</div>` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="text-2xl text-yellow-400">${stars}</div>
+                                            <div class="text-xs text-amber-700 mt-1">${date}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                });
+            } catch (e) {
+                console.error('[MyRatings] Error loading ratings:', e);
+                container.innerHTML = '<div class="text-center text-red-400 text-sm py-8">שגיאה בטעינת הדירוגים</div>';
+            }
+        }
+
+        function initPickerMap() {
+            if (mapPicker) {
+                setTimeout(() => mapPicker.invalidateSize(), 100);
+                return;
+            }
+            mapPicker = L.map('map-picker').setView([32.085, 34.781], 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(mapPicker);
+
+            mapPicker.on('click', e => {
+                const { lat, lng } = e.latlng;
+                setMapLocation(lat, lng);
+            });
+        }
+
+        function setMapLocation(lat, lng) {
+            if (markerPicker) mapPicker.removeLayer(markerPicker);
+            markerPicker = L.marker([lat, lng]).addTo(mapPicker);
+            mapPicker.setView([lat, lng], 14);
+            document.getElementById('p-lat').value = lat;
+            document.getElementById('p-lng').value = lng;
+            document.getElementById('loc-status').innerText = "✅ מיקום נבחר";
+            document.getElementById('loc-status').className = "text-xs text-green-600 font-bold bg-green-50 p-2 rounded-lg inline-block border border-green-100";
+        }
+
+        function geocodeAddress() {
+            const q = document.getElementById('p-address-input').value;
+            if (!q) return;
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&accept-language=he`).then(r => r.json()).then(d => {
+                if (d[0]) setMapLocation(d[0].lat, d[0].lon);
+                else showNotification("כתובת לא נמצאה", true);
+            });
+        }
+
+        function getCategoryName(cat) {
+            const names = { 'waiter': '🍷 מסעדות', 'moving': '📦 הובלות', 'barber': '✂️ מספרות', 'general': '🛠️ כללי' };
+            return names[cat] || 'כללי';
+        }
+
+        function setCategory(cat) {
+            currentCategory = cat;
+            document.querySelectorAll('.filter-chip').forEach(btn => btn.classList.toggle('active', btn.innerText.includes(getCategoryName(cat)) || (cat === 'all' && btn.innerText === 'הכל')));
+            renderJobs();
+        }
+
+        function getTimeAgo(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
+            if (seconds < 3600) return 'לפני ' + Math.floor(seconds / 60) + ' דק׳';
+            if (seconds < 86400) return 'לפני ' + Math.floor(seconds / 3600) + ' שעות';
+            return 'לפני ' + Math.floor(seconds / 86400) + ' ימים';
+        }
+
+        updateLocationUI();
+        document.getElementById('jobs-loader').classList.remove('hidden');
+
+        // --- Admin Dashboard Logic ---
+        // (loadAdminStats defined later with proper window.fb usage)
+        // (showScreen wrapper defined later with reports + stats + users loading)
+
+        // --- Rating System ---
+        const ratingListeners = {};
+        currentRatingTarget = { id: null, type: null };
+
+        window.loadRatings = function (targetId, type) {
+            currentRatingTarget = { id: targetId, type: type };
+
+            const key = `${type}_${targetId}`;
+            if (ratingListeners[key]) return;
+            ratingListeners[key] = true;
+
+            const ratingsRef = window.fb.ref(window.fb.db, `ratings/${type}/${targetId}`);
+
+            // Listen for ratings
+            window.fb.onValue(ratingsRef, (snapshot) => {
+                const data = snapshot.val();
+                let total = 0;
+                let count = 0;
+                let myRating = 0;
+
+                console.log(`[Rating] Loading ratings for ${type}/${targetId}:`, data);
+
+                if (data) {
+                    Object.entries(data).forEach(([uid, val]) => {
+                        total += val.score;
+                        count++;
+                        if (window.currentUser && uid === window.currentUser.uid) {
+                            myRating = val.score;
+                        }
+                    });
+                }
+
+                const avg = count > 0 ? (total / count).toFixed(1) : '–';
+                console.log(`[Rating] ${type}/${targetId} - Avg: ${avg}, Count: ${count}, MyRating: ${myRating}`);
+
+                // Update UI if exists (Job Details or Worker Card)
+                // We use dynamic IDs for worker cards, static for job details
+
+                // Job Details Badge
+                const ratingBadge = document.getElementById('rating-display-badge');
+                if (ratingBadge && type === 'business') {
+                    if (ratingBadge.dataset.targetId === targetId) {
+                        ratingBadge.innerText = `⭐️ ${avg} (${count} דירוגים)`;
+                        console.log(`[Rating] Updated job details badge for ${targetId}`);
+                    } else {
+                        console.log(`[Rating] Skipped job details badge update - target mismatch (${ratingBadge.dataset.targetId} !== ${targetId})`);
+                    }
+                }
+
+                // Worker Card Badge (if expanded)
+                const workerBadge = document.getElementById(`w-rating-${targetId}`);
+                if (workerBadge && type === 'worker') {
+                    workerBadge.innerText = `⭐️ ${avg} (${count})`;
+                    console.log(`[Rating] Updated worker badge for ${targetId}`);
+                }
+
+                // Update Star Selection UI
+                // Only if visible context matches
+                const starsContainer = document.getElementById(type === 'business' ? 'job-rating-stars' : `w-stars-${targetId}`);
+                if (starsContainer) {
+                    if (type === 'business' && starsContainer.dataset.targetId !== targetId) {
+                        console.log(`[Rating] Skipped stars update - target mismatch (${starsContainer.dataset.targetId} !== ${targetId})`);
+                        return;
+                    }
+
+                    const stars = starsContainer.querySelectorAll('.rating-star');
+                    stars.forEach((star, index) => {
+                        const s = parseInt(star.dataset.score);
+                        const wasActive = star.classList.contains('text-yellow-400');
+                        const shouldBeActive = s <= myRating;
+
+                        // Update star appearance
+                        star.innerText = shouldBeActive ? '★' : '☆';
+
+                        // Add/remove active class with animation
+                        if (shouldBeActive && !wasActive) {
+                            // Adding - trigger animation
+                            star.classList.remove('text-yellow-400');
+                            setTimeout(() => {
+                                star.classList.add('text-yellow-400');
+                            }, index * 50); // Stagger animation
+                        } else if (!shouldBeActive && wasActive) {
+                            // Removing
+                            star.classList.remove('text-yellow-400');
+                        } else if (shouldBeActive) {
+                            // Already active
+                            star.classList.add('text-yellow-400');
+                        }
+                    });
+                    console.log(`[Rating] Updated ${stars.length} stars for ${type}/${targetId}`);
+                }
+            });
+        }
+
+        window.rateUser = async function (score, manualId = null, manualType = null) {
+            console.log(`[RateUser] Called with score=${score}, manualId=${manualId}, manualType=${manualType}`);
+
+            if (!window.currentUser) {
+                showNotification('יש להתחבר כדי לדרג', true);
+                console.log('[RateUser] User not logged in');
+                return;
+            }
+
+            let target = currentRatingTarget;
+            if (manualId) target = { id: manualId, type: manualType };
+
+            console.log('[RateUser] Target:', target);
+
+            if (!target || !target.id) {
+                console.error('[RateUser] Invalid target:', target);
+                return;
+            }
+
+            // Prevent self-rating
+            if (target.id === window.currentUser.uid) {
+                showNotification('לא ניתן לדרג את עצמך 😊', true);
+                console.log('[RateUser] Attempted self-rating');
+                return;
+            }
+
+            // Rate Limit: Max 2 ratings per 2 hours
+            const rateLimitKey = `rate_limit_v2_${window.currentUser.uid}`;
+            let timestamps = JSON.parse(localStorage.getItem(rateLimitKey) || '[]');
+            const now = Date.now();
+
+            // Clean old timestamps (> 2 hours)
+            const twoHours = 2 * 60 * 60 * 1000;
+            timestamps = timestamps.filter(t => now - t < twoHours);
+
+            if (timestamps.length >= 2) {
+                showNotification('חרגת מכמות הדירוגים המותרת (2 בשעתיים)', true);
+                console.log('[RateUser] Rate limit triggered');
+                return;
+            }
+
+            timestamps.push(now);
+            localStorage.setItem(rateLimitKey, JSON.stringify(timestamps));
+
+            try {
+                const path = `ratings/${target.type}/${target.id}/${window.currentUser.uid}`;
+                console.log(`[RateUser] Writing to Firebase path: ${path}`, { score, timestamp: new Date().toISOString() });
+
+                // Visual feedback - make stars pulse
+                const starsContainer = document.getElementById(target.type === 'business' ? 'job-rating-stars' : `w-stars-${target.id}`);
+                if (starsContainer) {
+                    const stars = starsContainer.querySelectorAll('.rating-star');
+                    stars.forEach((star, index) => {
+                        const s = parseInt(star.dataset.score);
+                        if (s <= score) {
+                            star.style.transform = 'scale(1.3)';
+                            setTimeout(() => {
+                                star.style.transform = 'scale(1)';
+                            }, 150 + index * 50);
+                        }
+                    });
+                }
+
+                await window.fb.set(window.fb.ref(window.fb.db, path), {
+                    score: score,
+                    timestamp: new Date().toISOString()
+                });
+
+                // Success message with stars
+                const starEmoji = '⭐'.repeat(score);
+                showNotification(`${starEmoji} דירוג נשמר בהצלחה!`);
+                console.log('[RateUser] Rating saved successfully');
+            } catch (e) {
+                console.error('[RateUser] Error saving rating:', e);
+                showNotification('שגיאה בשמירת הדירוג', true);
+            }
+        }
+
+        // --- Report System ---
+        let currentReportTarget = { type: null, id: null };
+
+        window.openReportModal = function (type, targetId = null) {
+            if (!window.currentUser) {
+                showNotification('יש להתחבר כדי לדווח', true);
+                checkAuthAndNavigate('profile');
+                return;
+            }
+
+            // For business (job), get the userId from openJobId
+            if (type === 'business') {
+                const job = window.allJobs?.find(j => j.id === openJobId);
+                if (job) {
+                    targetId = job.userId;
+                }
+            }
+
+            currentReportTarget = { type, id: targetId };
+            document.getElementById('report-modal').classList.remove('hidden');
+            document.getElementById('report-reason').value = '';
+            document.getElementById('report-reason').focus();
+        };
+
+        window.closeReportModal = function () {
+            document.getElementById('report-modal').classList.add('hidden');
+            currentReportTarget = { type: null, id: null };
+        };
+
+        window.submitReport = async function () {
+            const reasonInput = document.getElementById('report-reason');
+            const reason = reasonInput.value.trim();
+
+            if (!reason) {
+                showNotification('נא לתאר את הבעיה', true);
+                return;
+            }
+
+            if (!window.currentUser) {
+                showNotification('יש להתחבר', true);
+                return;
+            }
+
+            // Rate Limit Check
+            if (!RateLimiter.check('report')) return;
+
+            if (!currentReportTarget.type || !currentReportTarget.id) {
+                showNotification('שגיאה בדיווח', true);
+                return;
+            }
+
+            try {
+                // Check if already reported
+                const alreadyReported = await new Promise(resolve => {
+                    const reportsRef = window.fb.ref(window.fb.db, 'reports');
+                    const unsub = window.fb.onValue(reportsRef, (snapshot) => {
+                        unsub(); // Stop listening
+                        const data = snapshot.val();
+                        if (data) {
+                            const exists = Object.values(data).find(r =>
+                                r.reporterUid === window.currentUser.uid &&
+                                r.targetId === currentReportTarget.id
+                            );
+                            resolve(!!exists);
+                        } else {
+                            resolve(false);
+                        }
+                    });
+                });
+
+                if (alreadyReported) {
+                    showNotification('כבר שלחת דיווח על משתמש זה בעבר', true);
+                    return;
+                }
+
+                const reportData = {
+                    reporterUid: window.currentUser.uid,
+                    reporterEmail: window.currentUser.email,
+                    reporterName: window.currentUser.displayName || 'משתמש',
+                    targetType: currentReportTarget.type,
+                    targetId: currentReportTarget.id,
+                    reason: sanitizeData(reason),
+                    timestamp: new Date().toISOString(),
+                    status: 'pending'
+                };
+
+                // Save to Firebase: reports/{reportId}
+                await window.fb.push(window.fb.ref(window.fb.db, 'reports'), reportData);
+                RateLimiter.record('report'); // Record success
+
+                showNotification('הדיווח התקבל וייבדק בהקדם. תודה!', false);
+                closeReportModal();
+
+            } catch (e) {
+                console.error(e);
+                showNotification('שגיאה בשליחת הדיווח', true);
+            }
+        };
+
+        // Payment Verification Logic
+        let paymentVerifyType = '';
+
+        window.closePaymentVerify = function () {
+            document.getElementById('screen-payment-verify').classList.add('hidden-screen');
+        }
+
+        window.copyWallet = function (ev) {
+            navigator.clipboard.writeText('bc1qtdjehh8h09dy7umzxmsxdwdg0rv3lv83u9cprs').catch(err => console.error('Copy failed', err));
+            const btn = ev && ev.currentTarget ? ev.currentTarget : null;
+            if (!btn) return;
+            const originalText = btn.innerHTML;
+            btn.innerText = '✅ הועתק';
+            setTimeout(() => { btn.innerHTML = originalText; }, 2000);
+        }
+
+        window.unlockPremium = function (type) {
+            console.log('[Premium] Unlocking for:', type);
+            if (type === 'job') {
+                const pInput = document.getElementById('p-is-premium');
+                const pMsg = document.getElementById('job-premium-msg');
+                if (pInput) pInput.value = 'true';
+                if (pMsg) pMsg.classList.remove('hidden');
+            } else if (type === 'worker') {
+                const wInput = document.getElementById('w-premium-until');
+                if (wInput) {
+                    // 7 days premium
+                    const nextWeek = new Date();
+                    nextWeek.setDate(nextWeek.getDate() + 7);
+                    wInput.value = nextWeek.toISOString();
+                }
+            }
+        };
+
+        async function verifyBitcoinTransaction(txid) {
+            try {
+                // 1. Replay Protection: Check Firebase if TXID already used
+                const txRef = window.fb.ref(window.fb.db, 'used_txids/' + txid);
+                const snapshot = await new Promise(resolve => window.fb.onValue(txRef, resolve, { onlyOnce: true }));
+
+                if (snapshot.exists()) {
+                    console.warn('[Crypto] TXID already used!');
+                    return { valid: false, error: 'transaction_used' };
+                }
+
+                // 2. Fetch from Blockchain API
+                const response = await fetch(`https://blockchain.info/rawtx/${txid}?cors=true`);
+                if (response.status === 404) return { valid: false, error: 'not_found' };
+                if (!response.ok) throw new Error('API Error');
+
+                const data = await response.json();
+                const targetWallet = 'bc1qtdjehh8h09dy7umzxmsxdwdg0rv3lv83u9cprs';
+
+                // 3. Verify Output Address (Wallet)
+                const output = data.out.find(o => o.addr === targetWallet);
+                if (!output) {
+                    console.warn('[Crypto] TX exists but target wallet mismatch');
+                    return { valid: false, error: 'wrong_wallet' };
+                }
+
+                // 4. Time Verification (Max 48 hours old)
+                const txTime = data.time; // Unix timestamp in seconds
+                const now = Math.floor(Date.now() / 1000);
+                const hours48 = 48 * 60 * 60;
+
+                if (now - txTime > hours48) {
+                    console.warn('[Crypto] Transaction is too old');
+                    return { valid: false, error: 'too_old' };
+                }
+
+                // 5. Amount Verification (Optional threshold, e.g. > 0)
+                if (output.value <= 0) {
+                    return { valid: false, error: 'zero_amount' };
+                }
+
+                return { valid: true, amount: output.value, timestamp: txTime };
+
+            } catch (e) {
+                console.error('[Crypto Verify] Error:', e);
+                return { valid: false, error: 'api_error' };
+            }
+        }
+
+        async function markTxidAsUsed(txid, amount) {
+            if (!window.currentUser) return;
+            try {
+                const txData = {
+                    userId: window.currentUser.uid,
+                    timestamp: new Date().toISOString(),
+                    amount: amount
+                };
+                await window.fb.set(window.fb.ref(window.fb.db, 'used_txids/' + txid), txData);
+                console.log('[Crypto] TXID marked as used:', txid);
+            } catch (e) {
+                console.error('[Crypto] Failed to mark TXID:', e);
+            }
+        }
+
+        window.checkTxid = async function () {
+            const txInput = document.getElementById('verify-txid');
+            const txid = txInput.value.trim();
+            const statusEl = document.getElementById('verify-status');
+            const btn = document.getElementById('btn-verify-tx');
+
+            if (!txid) {
+                statusEl.innerHTML = '<span class="text-red-500">נא להזין מזהה עסקה (TXID)</span>';
+                return;
+            }
+
+            // Regex validation: BTC TXID is 64 hex characters
+            const btcTxidRegex = /^[a-fA-F0-9]{64}$/;
+            if (!btcTxidRegex.test(txid)) {
+                statusEl.innerHTML = '<span class="text-red-500">מזהה עסקה לא תקין. נא להזין 64 תווים (Hex).</span>';
+                return;
+            }
+
+            statusEl.innerHTML = '<span class="text-slate-500">בודק מול הבלוקצ\'יין... <span class="animate-spin inline-block">⏳</span></span>';
+            btn.disabled = true;
+            btn.classList.add('opacity-70', 'cursor-not-allowed');
+
+            const result = await verifyBitcoinTransaction(txid);
+
+            // Artificial delay for UX
+            await new Promise(r => setTimeout(r, 1000));
+
+            btn.disabled = false;
+            btn.classList.remove('opacity-70', 'cursor-not-allowed');
+
+            if (result.valid) {
+                // Determine Success Message
+                statusEl.innerHTML = '<span class="text-green-600 font-bold text-lg">✅ התשלום אומת בהצלחה!</span>';
+                showNotification(`תשלום בסך ${(result.amount / 100000000).toFixed(6)} BTC התקבל!`, false);
+
+                // Mark as used to prevent replay
+                await markTxidAsUsed(txid, result.amount);
+
+                setTimeout(() => {
+                    closePaymentVerify();
+                    unlockPremium(paymentVerifyType);
+                    txInput.value = '';
+                    statusEl.innerHTML = '';
+                }, 2000);
+            } else {
+                let errorMsg = 'שגיאה באימות העסקה.';
+                if (result.error === 'transaction_used') errorMsg = 'שגיאה: נעשה שימוש במזהה עסקה זה בעבר.';
+                if (result.error === 'not_found') errorMsg = 'שגיאה: העסקה לא נמצאה בבלוקצ\'יין.';
+                if (result.error === 'wrong_wallet') errorMsg = 'שגיאה: הכסף לא נשלח לארנק הנכון.';
+                if (result.error === 'too_old') errorMsg = 'שגיאה: העסקה ישנה מדי (פג תוקף).';
+                statusEl.innerHTML = `<span class="text-red-500 font-bold">❌ ${errorMsg}</span>`;
+            }
+        }
+
+        // Updated Payment Handler
+        window.handlePayment = function (method, type) {
+            console.log(`[Payment] Method: ${method}, Type: ${type}`);
+
+            if (method === 'crypto') {
+                paymentVerifyType = type;
+                document.getElementById('screen-payment-verify').classList.remove('hidden-screen');
+            } else if (method === 'paypal') {
+                paymentVerifyType = type;
+                document.getElementById('screen-payment-paypal').classList.remove('hidden-screen');
+                renderPayPalButtons();
+            }
+        };
+
+        window.closePaymentPayPal = function () {
+            document.getElementById('screen-payment-paypal').classList.add('hidden-screen');
+        };
+
+        let paypalLoaded = false;
+        window.renderPayPalButtons = function () {
+            if (paypalLoaded) return;
+
+            // Check if container exists (it should)
+            if (!document.getElementById('paypal-button-container')) return;
+
+            // Load SDK dynamically
+            const script = document.createElement('script');
+            script.src = "https://www.paypal.com/sdk/js?client-id=AQktap2GE66ZEVF3Y_UG7DVbO9tluBRuha7cy9V49O01MM-I7COHl9GVAkyKA_3Gms89GiRT7o9nf3yp&currency=ILS";
+            script.onload = () => {
+                paypalLoaded = true;
+                paypal.Buttons({
+                    style: {
+                        layout: 'vertical',
+                        color: 'gold',
+                        shape: 'rect',
+                        label: 'pay'
+                    },
+                    createOrder: function (data, actions) {
+                        return actions.order.create({
+                            purchase_units: [{
+                                description: 'JobSnapping Premium Upgrade',
+                                amount: {
+                                    value: '20.00'
+                                }
+                            }]
+                        });
+                    },
+                    onApprove: function (data, actions) {
+                        return actions.order.capture().then(function (details) {
+                            console.log('[PayPal] Transaction completed by ' + details.payer.name.given_name);
+
+                            // Auto Unlock
+                            unlockPremium(paymentVerifyType);
+                            closePaymentPayPal();
+                            showNotification('תשלום התקבל בהצלחה! ✅', false);
+
+                            // Save to Firebase for audit
+                            if (window.fb && window.window.currentUser) {
+                                const paymentData = {
+                                    userId: window.currentUser.uid,
+                                    orderId: data.orderID,
+                                    payerId: details.payer.payer_id,
+                                    amount: '20.00',
+                                    currency: 'ILS',
+                                    timestamp: new Date().toISOString(),
+                                    status: 'COMPLETED'
+                                };
+                                window.fb.push(window.fb.ref(window.fb.db, 'payments'), paymentData);
+                            }
+                        });
+                    },
+                    onError: function (err) {
+                        console.error('[PayPal] Error:', err);
+                        showNotification('שגיאה בתהליך התשלום', true);
+                    }
+                }).render('#paypal-button-container');
+            };
+            script.onerror = () => {
+                showNotification('שגיאה בטעינת PayPal', true);
+            };
+            document.body.appendChild(script);
+        };
+
+        // Load reports for admin dashboard
+        window.loadReports = async function () {
+            if (!window.currentUser || window.currentUser.email !== ADMIN_EMAIL) return;
+
+            const container = document.getElementById('reports-container');
+            if (!container) return;
+
+            try {
+                const reportsRef = window.fb.ref(window.fb.db, 'reports');
+                window.fb.onValue(reportsRef, (snapshot) => {
+                    const data = snapshot.val();
+
+                    if (!data) {
+                        container.innerHTML = '<div class="text-center text-slate-400 text-sm py-8 bg-white rounded-xl">אין דיווחים 🎉</div>';
+                        return;
+                    }
+
+                    const reports = Object.entries(data).map(([id, report]) => ({ id, ...report }));
+                    // Sort by timestamp (newest first)
+                    reports.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                    container.innerHTML = reports.map(report => {
+                        const date = new Date(report.timestamp).toLocaleString('he-IL');
+                        const typeEmoji = report.targetType === 'business' ? '💼' : '👷';
+                        const typeName = report.targetType === 'business' ? 'מעסיק' : 'עובד';
+                        // Escape for JS string (single quotes) AND HTML attribute (double quotes)
+                        const safeReportId = report.id.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+                        // Get target name
+                        let targetName = 'לא ידוע';
+                        if (report.targetType === 'business') {
+                            const job = window.allJobs?.find(j => j.userId === report.targetId);
+                            targetName = job ? job.userName : 'מעסיק';
+                        } else {
+                            const worker = window.allWorkers?.find(w => w.uid === report.targetId);
+                            targetName = worker ? worker.name : 'עובד';
+                        }
+
+                        return `
+                            <div class="bg-white rounded-2xl p-4 border border-red-200 shadow-sm">
+                                <div class="flex items-start justify-between mb-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-2xl">${typeEmoji}</span>
+                                        <div>
+                                            <div class="font-bold text-sm text-slate-800">דיווח על ${typeName}</div>
+                                            <div class="text-xs text-slate-500">${escapeHtml(targetName)}</div>
+                                        </div>
+                                    </div>
+                                    <div class="text-xs text-slate-400">${date}</div>
+                                </div>
+                                
+                                <div class="bg-red-50 p-3 rounded-xl mb-3">
+                                    <div class="text-xs text-red-800 font-bold mb-1">סיבת הדיווח:</div>
+                                    <div class="text-sm text-slate-700">${escapeHtml(report.reason)}</div>
+                                </div>
+                                
+                                <div class="flex items-center justify-between text-xs">
+                                    <div class="text-slate-500">
+                                        דיווח ע"י: <span class="font-bold">${escapeHtml(report.reporterName)}</span>
+                                        (${escapeHtml(report.reporterEmail)})
+                                    </div>
+                                    <button onclick="deleteReport('${safeReportId}')" 
+                                        class="bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:bg-red-200 transition text-xs font-bold">
+                                        🗑️ מחק
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                });
+            } catch (e) {
+                console.error('[Reports] Error loading:', e);
+                container.innerHTML = '<div class="text-center text-red-400 text-sm py-8">שגיאה בטעינת הדיווחים</div>';
+            }
+        };
+
+        window.deleteReport = async function (reportId) {
+            if (!confirm('האם למחוק את הדיווח?')) return;
+
+            try {
+                await window.fb.remove(window.fb.ref(window.fb.db, `reports/${reportId}`));
+                showNotification('הדיווח נמחק');
+            } catch (e) {
+                console.error('[Reports] Error deleting:', e);
+                showNotification('שגיאה במחיקה', true);
+            }
+        };
+
+        // Load reports & stats when entering admin screen
+        if (!window._reportsListenerAttached) {
+            const _origShowScreen = window.showScreen;
+            if (_origShowScreen) {
+                window.showScreen = function (screen, ...args) {
+                    _origShowScreen(screen, ...args);
+
+                    // Update sidebar active state
+                    const sidebarMap = {
+                        'home': 0, 'feed': 1, 'workers': 2, 'post': 3, 'worker-profile': 4, 'profile': 5
+                    };
+                    document.querySelectorAll('#desktop-sidebar .sidebar-link').forEach((el, idx) => {
+                        el.classList.toggle('active', idx === sidebarMap[screen]);
+                    });
+                    // Update navbar links
+                    document.querySelectorAll('#navbar-desktop-links .nav-link').forEach((el, idx) => {
+                        const navScreens = ['feed', 'workers', 'post'];
+                        el.classList.toggle('active', navScreens[idx] === screen);
+                    });
+
+                    // Log Analytics
+                    if (window.fb && window.fb.logEvent) {
+                        window.fb.logEvent('screen_view', { screen_name: screen });
+                    }
+
+                    if (screen === 'admin' && window.currentUser?.email === ADMIN_EMAIL) {
+                        setTimeout(() => {
+                            if (window.loadReports) window.loadReports();
+                            if (window.loadAdminStats) window.loadAdminStats();
+                            if (window.loadAllUsers) window.loadAllUsers();
+                        }, 500);
+                    }
+                };
+                window._reportsListenerAttached = true;
+            }
+        }
+
+        window.loadAdminStats = function () {
+            if (!window.fb || !window.fb.db) {
+                console.warn('[AdminStats] window.fb not ready yet');
+                return;
+            }
+            const dateStr = new Date().toISOString().split('T')[0];
+            const analyticsRef = window.fb.ref(window.fb.db, `analytics/${dateStr}`);
+
+            window.fb.onValue(analyticsRef, (snapshot) => {
+                const data = snapshot.val() || {};
+
+                // Count funnel events
+                let homeCount = (data.app_open ? Object.keys(data.app_open).length : 0) +
+                    (data.user_session_start ? Object.keys(data.user_session_start).length : 0);
+                let feedCount = 0;
+                let detailsCount = (data.view_job_details ? Object.keys(data.view_job_details).length : 0);
+                let contactCount = (data.contact_whatsapp ? Object.keys(data.contact_whatsapp).length : 0) +
+                    (data.hire_me_click ? Object.keys(data.hire_me_click).length : 0);
+
+                if (data.screen_view) {
+                    Object.values(data.screen_view).forEach(ev => {
+                        if (ev.screen_name === 'feed' || ev.screen_name === 'jobs') feedCount++;
+                    });
+                }
+
+                // Normalize home for bar percentages
+                const fHome = Math.max(homeCount, feedCount, detailsCount, contactCount);
+
+                // Update top-level stat cards
+                const elTotalUsers = document.getElementById('adm-total-users');
+                const elConversions = document.getElementById('adm-conversions');
+                if (elTotalUsers) elTotalUsers.innerText = fHome;
+                if (elConversions) elConversions.innerText = contactCount;
+
+                // Update Funnel Counters
+                const elHome = document.getElementById('funnel-home-val');
+                const elFeed = document.getElementById('funnel-feed-val');
+                const elDetails = document.getElementById('funnel-details-val');
+                const elContact = document.getElementById('funnel-contact-val');
+
+                if (elHome) elHome.innerText = fHome;
+                if (elFeed) elFeed.innerText = feedCount;
+                if (elDetails) elDetails.innerText = detailsCount;
+                if (elContact) elContact.innerText = contactCount;
+
+                // Update Bars
+                const elFeedBar = document.getElementById('funnel-feed-bar');
+                const elDetailsBar = document.getElementById('funnel-details-bar');
+                const elContactBar = document.getElementById('funnel-contact-bar');
+
+                if (fHome > 0) {
+                    if (elFeedBar) {
+                        const pct = Math.min((feedCount / fHome) * 100, 100);
+                        elFeedBar.style.width = `${pct}%`;
+                        elFeedBar.innerText = `${Math.round(pct)}%`;
+                    }
+                    if (elDetailsBar) {
+                        const pct = Math.min((detailsCount / fHome) * 100, 100);
+                        elDetailsBar.style.width = `${pct}%`;
+                        elDetailsBar.innerText = `${Math.round(pct)}%`;
+                    }
+                    if (elContactBar) {
+                        const pct = Math.min((contactCount / fHome) * 100, 100);
+                        elContactBar.style.width = `${pct}%`;
+                        elContactBar.innerText = `${Math.round(pct)}%`;
+                    }
+                }
+
+                // A/B Testing
+                let groupA_Views = 0, groupA_Contacts = 0;
+                let groupB_Views = 0, groupB_Contacts = 0;
+
+                if (data.view_job_details) {
+                    Object.values(data.view_job_details).forEach(e => {
+                        if (e.group === 'A') groupA_Views++;
+                        else groupB_Views++;
+                    });
+                }
+                if (data.contact_whatsapp) {
+                    Object.values(data.contact_whatsapp).forEach(e => {
+                        if (e.group === 'A') groupA_Contacts++;
+                        else groupB_Contacts++;
+                    });
+                }
+
+                const rateA = groupA_Views > 0 ? ((groupA_Contacts / groupA_Views) * 100).toFixed(1) : 0;
+                const rateB = groupB_Views > 0 ? ((groupB_Contacts / groupB_Views) * 100).toFixed(1) : 0;
+
+                const elA = document.getElementById('ab-a-rate');
+                const elB = document.getElementById('ab-b-rate');
+                if (elA) elA.innerText = rateA + '%';
+                if (elB) elB.innerText = rateB + '%';
+
+            }, { onlyOnce: true });
+        };
+
+        // Log App Open
+        // Log App Open
+        // Checks if window.fb is ready, otherwise ignores (analytics is optional)
+        if (typeof logAnalytics === 'function') {
+            logAnalytics('app_open');
+        } else if (window.fb && window.fb.logEvent) {
+            window.fb.logEvent('app_open');
+        }
+
+        // --- NAVIGATION HANDLER (Fix for Back Button & Stuck UI) ---
+        window.addEventListener('popstate', (event) => {
+            const state = event.state;
+            console.log('[Navigation] Popstate event:', state);
+
+            // 1. Close ALL modals immediately to prevent "stuck" UI
+            const modals = ['report-modal', 'screen-payment-verify', 'screen-payment-paypal'];
+            modals.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+
+            // 2. Handle Job Details Modal Cleaning
+            const jobDetailsScreen = document.getElementById('screen-job-details');
+            if (jobDetailsScreen && !jobDetailsScreen.classList.contains('hidden-screen')) {
+                // If we are navigating AWAY from job details
+                if (!state || state.screen !== 'job-details') {
+                    jobDetailsScreen.classList.add('hidden-screen');
+                }
+            }
+
+            // 3. Route to correct screen
+            if (state && state.screen) {
+                if (state.screen === 'job-details' && state.id) {
+                    openDetails(state.id, false); // Open without pushing history
+                } else {
+                    showScreen(state.screen, false); // Show screen without pushing history
+                }
+            } else {
+                // Fallback / Initial load recovery from hash
+                const hash = window.location.hash.replace('#', '');
+                if (hash && hash.startsWith('job-')) {
+                    const jobId = hash.replace('job-', '');
+                    openDetails(jobId, false);
+                } else if (hash && hash !== 'job-details') {
+                    showScreen(hash, false);
+                } else {
+                    showScreen('home', false);
+                }
+            }
+        });
+
+        // Ensure initial state exists
+        if (!history.state) {
+            history.replaceState({ screen: 'home' }, null, '#home');
+        }
+
+        // --- JOBS LISTENER (Ensuring Real-Time Updates) ---
+        if (!window._jobsListenerAttached && window.fb) {
+            const jobsRef = window.fb.ref(window.fb.db, 'jobs');
+            window.fb.onValue(jobsRef, (snapshot) => {
+                const data = snapshot.val();
+                console.log('[JobsListener] Raw data from Firebase:', data ? Object.keys(data).length : 'null');
+
+                const jobsArr = [];
+                if (data) {
+                    Object.entries(data).forEach(([id, job]) => {
+                        jobsArr.push({ id, ...job });
+                    });
+                }
+
+                // Sort by default (newest)
+                jobsArr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+                window.allJobs = jobsArr;
+                console.log(`[JobsListener] Updated window.allJobs with ${jobsArr.length} jobs`);
+
+                // Trigger render if on feed
+                const feedScreen = document.getElementById('screen-feed');
+                if (feedScreen && !feedScreen.classList.contains('hidden-screen')) {
+                    if (window.renderJobs) window.renderJobs();
+                }
+
+                // Hide loader
+                const loader = document.getElementById('jobs-loader');
+                if (loader) loader.classList.add('hidden');
+            });
+            window._jobsListenerAttached = true;
+        }
+
+        // --- AUTH LISTENER & BLOCKED USER MIGRATION ---
+        // Ensuring userData is loaded and Blocked Status is checked
+        if (window.fb && window.fb.auth) {
+            window.fb.auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    window.currentUser = user;
+
+                    // 1. Check if email is manually banned
+                    const bannedEmailsRef = window.fb.ref(window.fb.db, 'banned_emails/' + user.email.replace(/\./g, ','));
+                    window.fb.onValue(bannedEmailsRef, (snap) => {
+                        if (snap.val() === true) {
+                            // If email is in banned list, auto-ban the UID
+                            window.fb.update(window.fb.ref(window.fb.db, 'users/' + user.uid), { blocked: true });
+                        }
+                    }, { onlyOnce: true });
+
+                    // Auto-sync user to DB
+                    syncUserToDb(user);
+
+                    // Fetch extended user data (including blocked status)
+                    const userRef = window.fb.ref(window.fb.db, 'users/' + user.uid);
+                    window.fb.onValue(userRef, (snapshot) => {
+                        window.userData = snapshot.val() || {};
+                        window.userData.uid = user.uid; // Ensure UID is present
+                        checkBlockStatus(); // Re-check status based on DB
+
+                        // Update UI if needed
+                        if (window.checkAuthUI) window.checkAuthUI();
+
+                        // If on admin-users screen, reload list
+                        if (window.location.hash === '#admin-users' && user.email === ADMIN_EMAIL) {
+                            if (typeof loadAllUsers === 'function') loadAllUsers();
+                        }
+                    });
+                } else {
+                    window.currentUser = null;
+                    window.userData = null;
+                }
+            });
+        }
+
+        async function syncUserToDb(user) {
+            try {
+                const userRef = window.fb.ref(window.fb.db, 'users/' + user.uid);
+
+                // Check if user exists first
+                const snapshot = await window.fb.get(userRef);
+                const existingData = snapshot.val();
+
+                // Prepare update data
+                const updateData = {
+                    email: user.email,
+                    displayName: user.displayName || user.email.split('@')[0],
+                    lastSeen: new Date().toISOString()
+                };
+
+                // Only set default values if user doesn't exist
+                if (!existingData) {
+                    updateData.blocked = false;
+                    updateData.blocked_posting = false;
+                    console.log('[Sync] Creating new user entry:', user.uid);
+                } else {
+                    console.log('[Sync] Updating existing user:', user.uid);
+                }
+
+                await window.fb.update(userRef, updateData);
+            } catch (e) {
+                console.error('Error syncing user:', e);
+            }
+        }
+
+        // --- ADMIN: Blocked Users Management ---
+        // --- ADMIN: User Management (Block/Unblock) ---
+        // --- ADMIN: User Management (Block/Unblock) ---
+
+        async function loadAllUsers() {
+            if (!window.currentUser || window.currentUser.email !== ADMIN_EMAIL) return;
+
+            const container = document.getElementById('users-list-container');
+            const placeholder = document.getElementById('no-users-placeholder');
+            if (!container || !placeholder) return;
+
+            // Show loading in placeholder
+            placeholder.innerHTML = '<div class="text-center text-slate-400 text-sm py-4">🔄 טוען נתונים...</div>';
+            placeholder.style.display = 'block';
+            container.innerHTML = '';
+
+            try {
+                const usersRef = window.fb.ref(window.fb.db, 'users');
+                const workersRef = window.fb.ref(window.fb.db, 'workers');
+                const jobsRef = window.fb.ref(window.fb.db, 'jobs');
+                const reportsRef = window.fb.ref(window.fb.db, 'reports');
+
+                const bannedEmailsRef = window.fb.ref(window.fb.db, 'banned_emails');
+
+                // Parallel Fetch
+                const [usersSnap, workersSnap, jobsSnap, reportsSnap, bannedEmailsSnap] = await Promise.all([
+                    new Promise((resolve) => window.fb.onValue(usersRef, (s) => resolve(s), { onlyOnce: true })),
+                    new Promise((resolve) => window.fb.onValue(workersRef, (s) => resolve(s), { onlyOnce: true })),
+                    new Promise((resolve) => window.fb.onValue(jobsRef, (s) => resolve(s), { onlyOnce: true })),
+                    new Promise((resolve) => window.fb.onValue(reportsRef, (s) => resolve(s), { onlyOnce: true })),
+                    new Promise((resolve) => window.fb.onValue(bannedEmailsRef, (s) => resolve(s), { onlyOnce: true }))
+                ]);
+
+                const usersData = usersSnap.val() || {};
+                const workersData = workersSnap.val() || {};
+                const jobsData = jobsSnap.val() || {};
+                const reportsData = reportsSnap.val() || {};
+                const bannedEmailsData = bannedEmailsSnap.val() || {};
+
+                console.log('[LoadUsers] Raw Counts:', {
+                    users: Object.keys(usersData).length,
+                    workers: Object.keys(workersData).length,
+                    jobs: Object.keys(jobsData).length,
+                    reports: Object.keys(reportsData).length,
+                    bannedEmails: Object.keys(bannedEmailsData).length
+                });
+
+                // Aggregate Unique Users
+                const uniqueUsers = {};
+
+                // 1. From Users Node
+                Object.entries(usersData).forEach(([uid, u]) => {
+                    uniqueUsers[uid] = { uid, ...u };
+                });
+
+                // 2. From Workers (If not exists or enrich)
+                Object.entries(workersData).forEach(([uid, w]) => {
+                    if (!uniqueUsers[uid]) {
+                        uniqueUsers[uid] = { uid: uid, blocked: false, blocked_posting: false };
+                    }
+                    uniqueUsers[uid].displayName = uniqueUsers[uid].displayName || w.name;
+                    uniqueUsers[uid].phone = uniqueUsers[uid].phone || w.phone;
+                    uniqueUsers[uid].isWorker = true;
+                });
+
+                // 3. From Jobs (Authors)
+                Object.entries(jobsData).forEach(([jobId, j]) => {
+                    if (j.userId) {
+                        if (!uniqueUsers[j.userId]) {
+                            uniqueUsers[j.userId] = { uid: j.userId, blocked: false, blocked_posting: false };
+                        }
+                        uniqueUsers[j.userId].displayName = uniqueUsers[j.userId].displayName || j.userName;
+                        uniqueUsers[j.userId].phone = uniqueUsers[j.userId].phone || j.phone;
+                        uniqueUsers[j.userId].hasJobs = true;
+                    }
+                });
+
+                // 4. From Reports (Reporters)
+                Object.entries(reportsData).forEach(([reportId, r]) => {
+                    if (r.reporterUid) {
+                        if (!uniqueUsers[r.reporterUid]) {
+                            uniqueUsers[r.reporterUid] = { uid: r.reporterUid, blocked: false, blocked_posting: false };
+                        }
+                        uniqueUsers[r.reporterUid].displayName = uniqueUsers[r.reporterUid].displayName || r.reporterName;
+                        uniqueUsers[r.reporterUid].email = uniqueUsers[r.reporterUid].email || r.reporterEmail; // Recover Email!
+                    }
+                });
+
+                // 5. From Banned Emails (Ghost Users)
+                Object.keys(bannedEmailsData).forEach(safeEmail => {
+                    const email = safeEmail.replace(/,/g, '.');
+                    // Check if this email belongs to an existing user in our list
+                    const existingUser = Object.values(uniqueUsers).find(u => u.email === email);
+
+                    if (existingUser) {
+                        // Mark existing user as blocked if in banned list (double check)
+                        existingUser.blocked = true;
+                    } else {
+                        // Create Ghost User
+                        const ghostUid = 'ghost_' + safeEmail;
+                        uniqueUsers[ghostUid] = {
+                            uid: ghostUid,
+                            email: email,
+                            displayName: '🚫 משתמש חסום (Email Only)',
+                            blocked: true,
+                            blocked_posting: true,
+                            isGhost: true,
+                            safeEmail: safeEmail
+                        };
+                    }
+                });
+
+                adminUsersCache = Object.values(uniqueUsers);
+                // Sort by name
+                adminUsersCache.sort((a, b) => (a.displayName || a.name || '').localeCompare(b.displayName || b.name || ''));
+
+                console.log(`[Admin] Loaded ${adminUsersCache.length} users into cache`);
+
+                // Don't render initially - let user search trigger display
+                container.innerHTML = '';
+                placeholder.innerHTML = `
+                    <div class="text-center text-slate-400 text-sm py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        <div class="text-2xl mb-2">✅</div>
+                        <div class="font-bold">${adminUsersCache.length} משתמשים נטענו למערכת</div>
+                        <div class="text-xs mt-2">התחל להקליד כדי לחפש משתמשים...</div>
+                    </div>
+                `;
+                placeholder.style.display = 'block';
+
+            } catch (e) {
+                console.error('Error loading users:', e);
+                placeholder.innerHTML = '<div class="text-center text-red-400 text-sm py-4">❌ שגיאה בטעינת נתונים</div>';
+                placeholder.style.display = 'block';
+            }
+        }
+        window.loadAllUsers = loadAllUsers;
+
+        // banByEmailInternal defined later with full reload logic
+
+        window.renderUsersList = function (users) {
+            const container = document.getElementById('users-list-container');
+            const placeholder = document.getElementById('no-users-placeholder');
+            if (!container || !placeholder) return;
+
+            // Hide placeholder when showing results
+            if (users.length === 0) {
+                container.innerHTML = '<div class="text-center text-slate-400 text-sm py-4">לא נמצאו משתמשים תואמים.</div>';
+                placeholder.style.display = 'none';
+                return;
+            }
+
+            // Hide placeholder and show results
+            placeholder.style.display = 'none';
+
+            container.innerHTML = users.map(u => {
+                const isFullBlock = u.blocked === true;
+                const isPostingBlock = u.blocked_posting === true && !isFullBlock;
+                const isClean = !isFullBlock && !isPostingBlock;
+
+                const safeEmail = u.email ? escapeHtml(u.email) : '<span class="text-slate-300 italic">אין אימייל</span>';
+                const phone = u.phone ? `<span class="mr-2">📱 ${escapeHtml(u.phone)}</span>` : '';
+                const name = u.displayName || u.name || 'משתמש ללא שם';
+                const safeUid = escapeHtml(u.uid); // Escape UID for usage in HTML text
+                // Escape for JS string (single quotes) AND HTML attribute (double quotes)
+                const jsSafeUid = u.uid.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+                // Construct role badges
+                let roles = '';
+                if (u.isWorker) roles += '🔨 ';
+                if (u.hasJobs) roles += '📋 ';
+
+                // Determine card styling based on status
+                let cardClass = 'border-slate-100';
+                let statusBadge = '';
+                if (isFullBlock) {
+                    cardClass = 'border-red-200 bg-red-50';
+                    statusBadge = '<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">חסימה מלאה</span>';
+                } else if (isPostingBlock) {
+                    cardClass = 'border-yellow-200 bg-yellow-50';
+                    statusBadge = '<span class="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-bold">חסום לפרסום</span>';
+                }
+
+                return `
+                    <div class="bg-white p-4 rounded-xl border ${cardClass} shadow-sm">
+                        <div class="flex justify-between items-start mb-3">
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800 flex items-center gap-2 mb-1">
+                                    ${escapeHtml(name)} 
+                                    <span class="text-[10px]">${roles}</span>
+                                    ${statusBadge}
+                                </div>
+                                <div class="text-xs text-slate-500 flex items-center gap-1">
+                                    <span>${safeEmail}</span>
+                                    ${phone}
+                                </div>
+                                <div class="text-[10px] text-slate-300 font-mono select-all cursor-pointer mt-1" 
+                                     title="Click to copy UID" 
+                                     onclick="navigator.clipboard.writeText('${jsSafeUid}'); showNotification('UID הועתק!')">
+                                    ${safeUid}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 3 Status Buttons -->
+                        <div class="flex gap-2">
+                            <button onclick="setUserStatus('${jsSafeUid}', 'clean')" 
+                                class="flex-1 px-3 py-2 rounded-lg text-xs font-bold transition border-2 ${isClean
+                        ? 'bg-green-50 text-green-700 border-green-500'
+                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-green-400'}">
+                                ✅ נקי
+                            </button>
+                            <button onclick="setUserStatus('${jsSafeUid}', 'posting')" 
+                                class="flex-1 px-3 py-2 rounded-lg text-xs font-bold transition border-2 ${isPostingBlock
+                        ? 'bg-yellow-50 text-yellow-700 border-yellow-500'
+                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-yellow-400'}">
+                                📝 חסום לפרסום
+                            </button>
+                            <button onclick="setUserStatus('${jsSafeUid}', 'full')" 
+                                class="flex-1 px-3 py-2 rounded-lg text-xs font-bold transition border-2 ${isFullBlock
+                        ? 'bg-red-50 text-red-700 border-red-500'
+                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-red-400'}">
+                                🚫 חסימה מלאה
+                            </button>
+                        </div>
+                        <div class="flex gap-2 mt-2">
+                            <button onclick="adminEditUser('${jsSafeUid}')" class="flex-1 bg-blue-50 text-blue-700 px-3 py-2 rounded-lg text-xs font-bold border border-blue-200 hover:bg-blue-100 transition" aria-label="ערוך פרטי משתמש">✏️ ערוך</button>
+                            <button onclick="adminDeleteUser('${jsSafeUid}')" class="flex-1 bg-red-50 text-red-600 px-3 py-2 rounded-lg text-xs font-bold border border-red-200 hover:bg-red-100 transition" aria-label="מחק משתמש">🗑️ מחק</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        };
+
+        window.filterUsersList = function () {
+            const query = (document.getElementById('admin-user-search').value || '').toLowerCase().trim();
+            console.log('[Filter] Query:', query);
+            const container = document.getElementById('users-list-container');
+            const placeholder = document.getElementById('no-users-placeholder');
+
+            if (!container || !placeholder) return;
+
+            // If empty query, show placeholder
+            if (query === '') {
+                container.innerHTML = '';
+                placeholder.style.display = 'block';
+                return;
+            }
+
+            // Hide placeholder when searching
+            placeholder.style.display = 'none';
+
+            // Filter users
+            const filtered = adminUsersCache.filter(u => {
+                return (u.displayName || '').toLowerCase().includes(query) ||
+                    (u.email || '').toLowerCase().includes(query) ||
+                    (u.phone || '').includes(query) ||
+                    (u.uid || '').toLowerCase().includes(query) ||
+                    (u.name || '').toLowerCase().includes(query);
+            });
+
+            // If matches found, render them
+            if (filtered.length > 0) {
+                renderUsersList(filtered);
+                return;
+            }
+
+            // No matches found - check if input looks like an email
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            const uidRegex = /^[a-zA-Z0-9]{20,}$/; // Firebase UIDs are 28+ chars
+
+            if (emailRegex.test(query)) {
+                const jsSafeQuery = query.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                // Show "Ban by Email" option
+                container.innerHTML = `
+                    <div class="bg-gradient-to-r from-red-50 to-orange-50 p-6 rounded-2xl border-2 border-red-200 text-center">
+                        <div class="text-4xl mb-3">🚫</div>
+                        <div class="font-bold text-slate-800 mb-2">משתמש לא נמצא במערכת</div>
+                        <div class="text-sm text-slate-600 mb-4">האימייל <span class="font-mono bg-white px-2 py-1 rounded">${escapeHtml(query)}</span> לא קיים במסד הנתונים</div>
+                        <button onclick="banByEmailInternal('${jsSafeQuery}')" 
+                            class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition active:scale-95">
+                            🚫 חסום את האימייל הזה בכל מקרה
+                        </button>
+                        <div class="text-xs text-slate-500 mt-3">
+                            המשתמש לא יוכל להירשם עם אימייל זה בעתיד
+                        </div>
+                    </div>
+                `;
+            } else if (uidRegex.test(query)) {
+                const jsSafeQuery = query.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                // Looks like a UID - offer to look it up directly in the database
+                container.innerHTML = `
+                    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-2xl border-2 border-blue-200 text-center">
+                        <div class="text-4xl mb-3">🔎</div>
+                        <div class="font-bold text-slate-800 mb-2">המשתמש לא נמצא ברשימה המקומית</div>
+                        <div class="text-sm text-slate-600 mb-4">UID: <span class="font-mono bg-white px-2 py-1 rounded">${escapeHtml(query)}</span></div>
+                        <button onclick="lookupUserByUid('${jsSafeQuery}')" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition active:scale-95">
+                            🔍 חפש ישירות במסד הנתונים
+                        </button>
+                        <div class="text-xs text-slate-500 mt-3">
+                            יחפש את ה-UID ישירות ב-Firebase וייצור רשומה אם צריך
+                        </div>
+                    </div>
+                `;
+            } else {
+                // No matches and not an email or UID format
+                container.innerHTML = `
+                    <div class="text-center text-slate-400 text-sm py-6 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        <div class="text-2xl mb-2">🔍</div>
+                        <div>לא נמצאו תוצאות עבור "<strong>${escapeHtml(query)}</strong>"</div>
+                        <div class="text-xs mt-2">נסה לחפש לפי שם, אימייל, טלפון או UID</div>
+                        <button onclick="loadAllUsers().then(() => filterUsersList())" 
+                            class="mt-3 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold transition">
+                            🔄 רענן רשימת משתמשים
+                        </button>
+                    </div>
+                `;
+            }
+        };
+
+        window.setUserStatus = async function (uid, status) {
+            // status: 'clean', 'posting', 'full'
+            const updates = {};
+            let msg = '';
+
+            if (status === 'clean') {
+                updates.blocked = false;
+                updates.blocked_posting = false;
+                msg = 'המשתמש שוחרר מכל החסימות ✅';
+            } else if (status === 'posting') {
+                updates.blocked = false;
+                updates.blocked_posting = true;
+                msg = 'המשתמש נחסם לפרסום משרות 📝';
+            } else if (status === 'full') {
+                updates.blocked = true;
+                updates.blocked_posting = true; // Implicitly blocked from posting too
+                msg = 'המשתמש נחסם לחלוטין 🚫';
+            }
+
+            if (!confirm(`האם אתה בטוח שברצונך לשנות את סטטוס המשתמש?`)) return;
+
+            try {
+                // Special handling for Ghost Users
+                if (uid.startsWith('ghost_')) {
+                    const userIndex = adminUsersCache.findIndex(u => u.uid === uid);
+                    const user = adminUsersCache[userIndex];
+
+                    if (status === 'clean') {
+                        // Remove from banned_emails
+                        if (user && user.safeEmail) {
+                            console.log('[Status] Removing from banned_emails:', user.safeEmail);
+                            await window.fb.remove(window.fb.ref(window.fb.db, 'banned_emails/' + user.safeEmail));
+                            showNotification('המייל הוסר מרשימת החסומים ✅');
+                            // Remove from cache locally
+                            adminUsersCache.splice(userIndex, 1);
+                            filterUsersList();
+                            return;
+                        }
+                    } else {
+                        // Already blocked, nothing to do really
+                        showNotification('משתמש זה כבר חסום מלא (Ghost)', true);
+                        return;
+                    }
+                }
+
+                console.log('[Status] Updating real user:', uid, updates);
+                await window.fb.update(window.fb.ref(window.fb.db, 'users/' + uid), updates);
+                showNotification(msg);
+
+                // Update local cache and re-render
+                const userIndex = adminUsersCache.findIndex(u => u.uid === uid);
+                if (userIndex !== -1) {
+                    if (status === 'clean') {
+                        adminUsersCache[userIndex].blocked = false;
+                        adminUsersCache[userIndex].blocked_posting = false;
+                    } else if (status === 'posting') {
+                        adminUsersCache[userIndex].blocked = false;
+                        adminUsersCache[userIndex].blocked_posting = true;
+                    } else if (status === 'full') {
+                        adminUsersCache[userIndex].blocked = true;
+                        adminUsersCache[userIndex].blocked_posting = true;
+                    }
+                    filterUsersList(); // Re-render preserving filter
+                }
+            } catch (e) {
+                console.error('Error updating status:', e);
+                showNotification('שגיאה בביצוע הפעולה', true);
+            }
+        };
+
+        window.banByEmailInternal = async function (email) {
+            console.log('[Ban] Attempting to ban:', email);
+            if (!email || !email.includes('@')) return showNotification('אימייל לא תקין', true);
+
+            if (!confirm(`האם אתה בטוח שברצונך לחסום את ${email}?`)) return;
+
+            const safeEmail = email.replace(/\./g, ',');
+            try {
+                await window.fb.set(window.fb.ref(window.fb.db, 'banned_emails/' + safeEmail), true);
+                console.log('[Ban] Successfully banned:', safeEmail);
+                showNotification(`האימייל ${email} נחסם בהצלחה! 🚫`);
+
+                // Reload list to show ghost user
+                if (typeof loadAllUsers === 'function') {
+                    console.log('[Ban] Reloading users list...');
+                    await loadAllUsers();
+                }
+
+                // Clear search and show list
+                document.getElementById('admin-user-search').value = '';
+                filterUsersList();
+
+            } catch (e) {
+                console.error('[Ban] Error banning email:', e);
+                showNotification('שגיאה בחסימת האימייל: ' + e.message, true);
+            }
+        };
+        window.lookupUserByUid = async function (uid) {
+            console.log('[Lookup] Looking up UID:', uid);
+            const container = document.getElementById('users-list-container');
+            if (!container) return;
+
+            container.innerHTML = '<div class="text-center text-slate-400 text-sm py-4">🔄 מחפש...</div>';
+
+            try {
+                // Try to find in users node
+                const userSnap = await window.fb.get(window.fb.ref(window.fb.db, 'users/' + uid));
+                const workerSnap = await window.fb.get(window.fb.ref(window.fb.db, 'workers/' + uid));
+
+                let userData = userSnap.val();
+                const workerData = workerSnap.val();
+
+                if (!userData && !workerData) {
+                    const jsSafeUid = uid.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    // User not in DB at all - offer to create entry
+                    container.innerHTML = `
+                        <div class="bg-gradient-to-r from-yellow-50 to-amber-50 p-6 rounded-2xl border-2 border-yellow-200 text-center">
+                            <div class="text-4xl mb-3">⚠️</div>
+                            <div class="font-bold text-slate-800 mb-2">המשתמש לא קיים במסד הנתונים</div>
+                            <div class="text-sm text-slate-600 mb-4">UID: <span class="font-mono bg-white px-2 py-1 rounded">${escapeHtml(uid)}</span></div>
+                            <div class="text-sm text-slate-500 mb-4">המשתמש הזה רשום ב-Firebase Auth אבל עדיין לא נכנס לאתר עם הקוד המעודכן</div>
+                            <div class="flex gap-2 justify-center flex-wrap">
+                                <button onclick="createUserEntry('${jsSafeUid}')" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition active:scale-95">
+                                    ➕ צור רשומה ונהל משתמש
+                                </button>
+                                <button onclick="createAndBlockUser('${jsSafeUid}')" 
+                                    class="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition active:scale-95">
+                                    🚫 צור וחסום מיד
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // User found in DB - add to cache and render
+                const user = {
+                    uid: uid,
+                    ...(userData || {}),
+                    isWorker: !!workerData
+                };
+
+                if (workerData) {
+                    user.displayName = user.displayName || workerData.name;
+                    user.phone = user.phone || workerData.phone;
+                }
+
+                // Add to cache if not already there
+                const existingIndex = adminUsersCache.findIndex(u => u.uid === uid);
+                if (existingIndex === -1) {
+                    adminUsersCache.push(user);
+                } else {
+                    adminUsersCache[existingIndex] = user;
+                }
+
+                console.log('[Lookup] Found user:', user);
+                showNotification('המשתמש נמצא! ✅');
+                renderUsersList([user]);
+
+            } catch (e) {
+                console.error('[Lookup] Error:', e);
+                container.innerHTML = `
+                    <div class="text-center text-red-500 text-sm py-4 bg-red-50 rounded-xl border border-red-200">
+                        <div class="text-2xl mb-2">❌</div>
+                        <div>שגיאה בחיפוש: ${escapeHtml(e.message)}</div>
+                    </div>
+                `;
+            }
+        };
+
+        window.createUserEntry = async function (uid) {
+            try {
+                const userRef = window.fb.ref(window.fb.db, 'users/' + uid);
+                await window.fb.update(userRef, {
+                    blocked: false,
+                    blocked_posting: false,
+                    createdByAdmin: true,
+                    createdAt: new Date().toISOString()
+                });
+                showNotification('רשומת משתמש נוצרה ✅');
+                await loadAllUsers();
+                // Re-search for this UID
+                document.getElementById('admin-user-search').value = uid;
+                filterUsersList();
+            } catch (e) {
+                console.error('[Create] Error:', e);
+                showNotification('שגיאה ביצירת רשומה: ' + e.message, true);
+            }
+        };
+
+        window.createAndBlockUser = async function (uid) {
+            try {
+                const userRef = window.fb.ref(window.fb.db, 'users/' + uid);
+                await window.fb.update(userRef, {
+                    blocked: true,
+                    blocked_posting: true,
+                    createdByAdmin: true,
+                    createdAt: new Date().toISOString()
+                });
+                showNotification('המשתמש נחסם בהצלחה! 🚫');
+                await loadAllUsers();
+                document.getElementById('admin-user-search').value = uid;
+                filterUsersList();
+            } catch (e) {
+                console.error('[Block] Error:', e);
+                showNotification('שגיאה בחסימת משתמש: ' + e.message, true);
+            }
+        };
+
+        // --- Admin: Jobs Management ---
+        window.filterAdminJobsList = function (showAll = false) {
+            const query = (document.getElementById('admin-job-search')?.value || '').toLowerCase().trim();
+            const container = document.getElementById('admin-jobs-list-container');
+            const placeholder = document.getElementById('no-jobs-placeholder');
+            if (!container || !placeholder) return;
+
+            if (!showAll && query === '') {
+                container.innerHTML = '';
+                placeholder.style.display = 'block';
+                return;
+            }
+            placeholder.style.display = 'none';
+
+            const allJobs = window.allJobs || [];
+            const list = showAll ? allJobs : allJobs.filter(j =>
+                (j.title || '').toLowerCase().includes(query) ||
+                (j.userName || '').toLowerCase().includes(query) ||
+                (j.userEmail || '').toLowerCase().includes(query) ||
+                (j.id || '').toLowerCase().includes(query)
+            );
+
+            if (list.length === 0) {
+                container.innerHTML = '<div class="text-center text-slate-400 text-sm py-4">לא נמצאו משרות.</div>';
+                return;
+            }
+
+            container.innerHTML = list.map(j => {
+                const sid = j.id.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                return `<div role="listitem" class="bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="font-bold text-sm text-slate-800 mb-1">${escapeHtml(j.title)}</div>
+                    <div class="text-xs text-slate-500 mb-2">מפרסם: ${escapeHtml(j.userName || 'לא ידוע')}</div>
+                    <div class="flex gap-2">
+                        <button onclick="adminEditJob('${sid}')" class="flex-1 bg-blue-50 text-blue-700 px-3 py-2 rounded-lg text-xs font-bold border border-blue-200 hover:bg-blue-100 transition" aria-label="ערוך משרה">✏️ ערוך</button>
+                        <button onclick="adminDeleteJob('${sid}')" class="flex-1 bg-red-50 text-red-600 px-3 py-2 rounded-lg text-xs font-bold border border-red-200 hover:bg-red-100 transition" aria-label="מחק משרה">🗑️ מחק</button>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        window.adminEditJob = function (jobId) {
+            openJobId = jobId;
+            startEditJob();
+        };
+
+        window.adminDeleteJob = async function (jobId) {
+            if (!confirm('האם למחוק משרה זו לצמיתות?')) return;
+            try {
+                await window.fb.remove(window.fb.ref(window.fb.db, 'jobs/' + jobId));
+                showNotification('המשרה נמחקה בהצלחה!');
+                filterAdminJobsList(true);
+            } catch (e) {
+                showNotification('שגיאה במחיקת משרה', true);
+            }
+        };
+
+        // --- Admin: Workers Management ---
+        window.filterAdminWorkersList = function (showAll = false) {
+            const query = (document.getElementById('admin-worker-search')?.value || '').toLowerCase().trim();
+            const container = document.getElementById('admin-workers-list-container');
+            const placeholder = document.getElementById('no-workers-placeholder');
+            if (!container || !placeholder) return;
+
+            if (!showAll && query === '') {
+                container.innerHTML = '';
+                placeholder.style.display = 'block';
+                return;
+            }
+            placeholder.style.display = 'none';
+
+            const aw = window.allWorkers || [];
+            const list = showAll ? aw : aw.filter(w =>
+                (w.name || '').toLowerCase().includes(query) ||
+                (w.professionText || '').toLowerCase().includes(query) ||
+                (w.uid || '').toLowerCase().includes(query)
+            );
+
+            if (list.length === 0) {
+                container.innerHTML = '<div class="text-center text-slate-400 text-sm py-4">לא נמצאו בעלי מקצוע.</div>';
+                return;
+            }
+
+            container.innerHTML = list.map(w => {
+                const sid = w.uid.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                return `<div role="listitem" class="bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="font-bold text-sm text-slate-800 mb-1">${escapeHtml(w.name)} – ${escapeHtml(w.professionText)}</div>
+                    <div class="text-xs text-slate-500 mb-1">${w.userEmail ? escapeHtml(w.userEmail) : '<span class="italic text-slate-300">אין אימייל</span>'}</div>
+                    <div class="text-[10px] text-slate-400 mb-2 font-mono">${w.uid}</div>
+                    <div class="flex gap-2">
+                        <button onclick="adminEditWorker('${sid}')" class="flex-1 bg-blue-50 text-blue-700 px-3 py-2 rounded-lg text-xs font-bold border border-blue-200 hover:bg-blue-100 transition" aria-label="ערוך בעל מקצוע">✏️ ערוך</button>
+                        <button onclick="adminDeleteWorker('${sid}')" class="flex-1 bg-red-50 text-red-600 px-3 py-2 rounded-lg text-xs font-bold border border-red-200 hover:bg-red-100 transition" aria-label="מחק בעל מקצוע">🗑️ מחק</button>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        window.adminEditWorker = async function (uid) {
+            const worker = (window.allWorkers || []).find(w => w.uid === uid);
+            if (!worker) return showNotification('פרופיל לא נמצא', true);
+            const newName = prompt('שם בעל המקצוע:', worker.name || '');
+            if (newName === null) return;
+            const newPhone = prompt('טלפון:', worker.phone || '');
+            if (newPhone === null) return;
+            const newProfession = prompt('מקצוע:', worker.professionText || '');
+            if (newProfession === null) return;
+            try {
+                await window.fb.update(window.fb.ref(window.fb.db, 'workers/' + uid), {
+                    name: newName.trim(),
+                    phone: newPhone.trim(),
+                    professionText: newProfession.trim()
+                });
+                showNotification('פרופיל עודכן בהצלחה ✅');
+                // Update local cache
+                const idx = window.allWorkers.findIndex(w => w.uid === uid);
+                if (idx !== -1) { window.allWorkers[idx].name = newName.trim(); window.allWorkers[idx].phone = newPhone.trim(); window.allWorkers[idx].professionText = newProfession.trim(); }
+                filterAdminWorkersList(true);
+            } catch (e) {
+                showNotification('שגיאה בעדכון', true);
+            }
+        };
+
+        window.adminDeleteWorker = async function (uid) {
+            if (!confirm('האם למחוק פרופיל בעל מקצוע זה לצמיתות?')) return;
+            try {
+                await window.fb.remove(window.fb.ref(window.fb.db, 'workers/' + uid));
+                showNotification('הפרופיל נמחק!');
+                if (window.allWorkers) window.allWorkers = window.allWorkers.filter(w => w.uid !== uid);
+                filterAdminWorkersList(true);
+            } catch (e) {
+                showNotification('שגיאה במחיקה', true);
+            }
+        };
+
+        // --- Admin: Users Edit/Delete ---
+        window.adminEditUser = async function (uid) {
+            const user = adminUsersCache.find(u => u.uid === uid);
+            if (!user) return showNotification('משתמש לא נמצא', true);
+            const newName = prompt('שם משתמש:', user.displayName || user.name || '');
+            if (newName === null) return;
+            const newPhone = prompt('טלפון:', user.phone || '');
+            if (newPhone === null) return;
+            try {
+                await window.fb.update(window.fb.ref(window.fb.db, 'users/' + uid), {
+                    displayName: newName.trim(),
+                    name: newName.trim(),
+                    phone: newPhone.trim()
+                });
+                showNotification('משתמש עודכן ✅');
+                loadAllUsers();
+            } catch (e) {
+                showNotification('שגיאה בעדכון', true);
+            }
+        };
+
+        window.adminDeleteUser = async function (uid) {
+            if (!confirm('האם למחוק משתמש זה מהמסד? (לא מוחק מ-Authentication)')) return;
+            try {
+                await window.fb.remove(window.fb.ref(window.fb.db, 'users/' + uid));
+                showNotification('המשתמש נמחק מהמסד');
+                loadAllUsers();
+            } catch (e) {
+                showNotification('שגיאה במחיקת משתמש', true);
+            }
+        };
+
+        // Initialize Lucide icons
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
