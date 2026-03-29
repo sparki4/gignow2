@@ -2077,8 +2077,17 @@
             }
         };
 
+        // SECURITY: Prevent double-click / rapid-fire job publishing
+        let _isPublishing = false;
+
         async function publishJob() {
             if (!window.currentUser) return;
+
+            // Double-click guard
+            if (_isPublishing) {
+                showNotification('המשרה כבר בתהליך פרסום, נא להמתין...', true);
+                return;
+            }
 
             // Honeypot Check
             if (document.getElementById('hp-job').value) {
@@ -2137,6 +2146,8 @@
                 return;
             }
 
+            // Set publishing guard BEFORE async operations
+            _isPublishing = true;
             btn.disabled = true;
             btn.innerText = 'מפרסם...';
 
@@ -2177,14 +2188,49 @@
                     await window.fb.update(window.fb.ref(window.fb.db, 'jobs/' + openJobId), jobData);
                     showNotification('המשרה עודכנה בהצלחה');
                 } else {
-                    // --- JOB LIMIT CHECK (Max 2 active jobs) - REDUNDANT SAFETY ---
-                    const myJobCount = (window.allJobs || []).filter(j => j.userId === window.currentUser.uid && isJobActive(j)).length;
+                    // --- SERVER-SIDE JOB LIMIT CHECK ---
+                    // Query Firebase directly instead of relying on client-side window.allJobs
                     const canBypass = window.currentUser.email === ADMIN_EMAIL;
-
-                    if (myJobCount >= 2 && !canBypass) {
-                        throw new Error('הגעת למגבלת המשרות (מקסימום 2). נא למחוק משרה ישנה.');
+                    
+                    if (!canBypass) {
+                        try {
+                            const jobsSnapshot = await window.fb.get(window.fb.ref(window.fb.db, 'jobs'));
+                            const allJobsData = jobsSnapshot.val();
+                            let serverJobCount = 0;
+                            let hasDuplicateTitle = false;
+                            
+                            if (allJobsData) {
+                                Object.values(allJobsData).forEach(job => {
+                                    if (job.userId === window.currentUser.uid && isJobActive(job)) {
+                                        serverJobCount++;
+                                        // Check for duplicate title (exact match)
+                                        if (job.title && job.title.trim() === title.trim()) {
+                                            hasDuplicateTitle = true;
+                                        }
+                                    }
+                                });
+                            }
+                            
+                            if (hasDuplicateTitle) {
+                                throw new Error('DUPLICATE_TITLE');
+                            }
+                            
+                            if (serverJobCount >= 2) {
+                                throw new Error('JOB_LIMIT');
+                            }
+                        } catch (limitErr) {
+                            if (limitErr.message === 'DUPLICATE_TITLE') {
+                                showNotification('כבר יש לך משרה פעילה עם כותרת זהה. לא ניתן לפרסם כפילות.', true);
+                                return;
+                            }
+                            if (limitErr.message === 'JOB_LIMIT') {
+                                showNotification('הגעת למגבלת המשרות (מקסימום 2). נא למחוק משרה ישנה.', true);
+                                return;
+                            }
+                            throw limitErr; // Re-throw unexpected errors
+                        }
                     }
-                    // -------------------------------------------------------------
+                    // -------------------------------------------
 
                     await window.fb.push(window.fb.ref(window.fb.db, 'jobs'), jobData);
                     RateLimiter.record('post_job'); // Record success
@@ -2198,6 +2244,7 @@
                 console.error(e);
                 showNotification('שגיאה בפרסום', true);
             } finally {
+                _isPublishing = false;
                 btn.disabled = false;
                 btn.innerText = 'פרסם משרה עכשיו';
             }
